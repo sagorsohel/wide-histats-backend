@@ -22,8 +22,8 @@ export interface ActiveVisitor {
 class RealtimeService {
   // Map of websiteId -> Map of visitorKey -> ActiveVisitor
   private websitesMap = new Map<string, Map<string, ActiveVisitor>>();
-  // Histats standard active online window: 8 minutes (matches Histats.com live count)
-  public readonly DEFAULT_ONLINE_WINDOW_MS = 8 * 60 * 1000;
+  // Histats standard active online window: 12 minutes (matches Histats.com ~1000 live count)
+  public readonly DEFAULT_ONLINE_WINDOW_MS = 12 * 60 * 1000;
   private isSyncing = false;
   private listeners: ((websiteId: string) => void)[] = [];
 
@@ -40,7 +40,7 @@ class RealtimeService {
       this.syncFromDatabase().catch(() => {});
     }, 15000);
 
-    // Run cleanup of expired visitors (> 8m) every 10 seconds
+    // Run cleanup of expired visitors (> 12m) every 10 seconds
     setInterval(() => {
       this.cleanupStaleVisitors();
     }, 10000);
@@ -80,7 +80,7 @@ class RealtimeService {
           FROM sessions s
           JOIN visitors v ON v.id = s.visitor_id
           LEFT JOIN visitor_locations vl ON vl.visitor_id = v.id
-          WHERE s.last_seen_at >= now() - interval '8 minutes'
+          WHERE s.last_seen_at >= now() - interval '12 minutes'
             AND s.website_id = ${websiteId}
           ORDER BY s.visitor_id, s.last_seen_at DESC
         `
@@ -101,7 +101,7 @@ class RealtimeService {
           FROM sessions s
           JOIN visitors v ON v.id = s.visitor_id
           LEFT JOIN visitor_locations vl ON vl.visitor_id = v.id
-          WHERE s.last_seen_at >= now() - interval '8 minutes'
+          WHERE s.last_seen_at >= now() - interval '12 minutes'
           ORDER BY s.website_id, s.visitor_id, s.last_seen_at DESC
         `;
 
