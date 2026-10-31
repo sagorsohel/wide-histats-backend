@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { AuthService } from "./auth.service.js";
 import { ApiResponse } from "../../utils/api-response.js";
+import { verifyRefreshToken } from "../../utils/jwt.js";
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
@@ -57,9 +58,18 @@ export class AuthController {
 
   static async logout(req: Request, res: Response, next: NextFunction) {
     try {
+      const token = req.cookies?.refreshToken || req.body?.refreshToken;
+      const allDevices = req.body?.allDevices === true;
+
       if (req.user) {
-        await AuthService.logout(req.user.userId);
+        await AuthService.logout(req.user.userId, token, allDevices);
+      } else if (token) {
+        const payload = verifyRefreshToken(token);
+        if (payload?.userId) {
+          await AuthService.logout(payload.userId, token, allDevices);
+        }
       }
+
       res.clearCookie("refreshToken");
       res.clearCookie("accessToken");
       return ApiResponse.success(res, null, "Logged out successfully");

@@ -1,4 +1,5 @@
-import { eq, and, isNull } from "drizzle-orm";
+import crypto from "crypto";
+import { eq, and, isNull, gt } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { users } from "../../db/schema/users.js";
 import { refreshTokens } from "../../db/schema/refresh-tokens.js";
@@ -9,6 +10,10 @@ import {
   verifyRefreshToken,
 } from "../../utils/jwt.js";
 import { RegisterInput, LoginInput } from "./auth.schema.js";
+
+const hashToken = (token: string): string => {
+  return crypto.createHash("sha256").update(token).digest("hex");
+};
 
 export class AuthService {
   static async register(input: RegisterInput) {
@@ -40,12 +45,12 @@ export class AuthService {
     const accessToken = signAccessToken({ userId: user.id, email: user.email });
     const refreshToken = signRefreshToken({ userId: user.id, email: user.email });
 
-    // Store refresh token
+    // Store refresh token for this specific device
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    const hashedRefresh = await hashPassword(refreshToken);
+    const tokenHash = hashToken(refreshToken);
     await db.insert(refreshTokens).values({
       userId: user.id,
-      tokenHash: hashedRefresh,
+      tokenHash,
       expiresAt,
     });
 
@@ -80,11 +85,12 @@ export class AuthService {
     const accessToken = signAccessToken({ userId: user.id, email: user.email });
     const refreshToken = signRefreshToken({ userId: user.id, email: user.email });
 
+    // Store refresh token for this specific device (supports unlimited concurrent devices)
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    const hashedRefresh = await hashPassword(refreshToken);
+    const tokenHash = hashToken(refreshToken);
     await db.insert(refreshTokens).values({
       userId: user.id,
-      tokenHash: hashedRefresh,
+      tokenHash,
       expiresAt,
     });
 
@@ -116,16 +122,83 @@ export class AuthService {
       throw new Error("User no longer exists.");
     }
 
+    // Check that this device's refresh token is active and not revoked
+    const shaHash = hashToken(token);
+    const activeTokens = await db
+      .select()
+      .from(refreshTokens)
+      .where(
+        and(
+          eq(refreshTokens.userId, user.id),
+          isNull(refreshTokens.revokedAt),
+          gt(refreshTokens.expiresAt, new Date())
+        )
+      );
+
+    let matchedToken = activeTokens.find((t) => t.tokenHash === shaHash);
+    if (!matchedToken) {
+      // Check legacy bcrypt hash if present
+      for (const t of activeTokens) {
+        if (t.tokenHash.startsWith("$2a$") || t.tokenHash.startsWith("$2b$")) {
+          const isMatch = await comparePassword(token, t.tokenHash);
+          if (isMatch) {
+            matchedToken = t;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!matchedToken) {
+      throw new Error("Refresh token has been revoked or expired.");
+    }
+
     const accessToken = signAccessToken({ userId: user.id, email: user.email });
-    return { accessToken };
+    return { accessToken, refreshToken: token };
   }
 
-  static async logout(userId: string) {
-    // Revoke all active refresh tokens for this user
-    await db
-      .update(refreshTokens)
-      .set({ revokedAt: new Date() })
-      .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
+  static async logout(userId: string, refreshToken?: string, allDevices = false) {
+    if (allDevices) {
+      // Revoke all devices if explicitly requested
+      await db
+        .update(refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
+      return;
+    }
+
+    // Revoke ONLY the requesting device's refresh token so other devices stay logged in
+    if (refreshToken) {
+      const shaHash = hashToken(refreshToken);
+      await db
+        .update(refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(
+          and(
+            eq(refreshTokens.userId, userId),
+            eq(refreshTokens.tokenHash, shaHash),
+            isNull(refreshTokens.revokedAt)
+          )
+        );
+
+      // Also check legacy bcrypt tokens if any
+      const activeTokens = await db
+        .select()
+        .from(refreshTokens)
+        .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
+
+      for (const t of activeTokens) {
+        if (t.tokenHash.startsWith("$2a$") || t.tokenHash.startsWith("$2b$")) {
+          const isMatch = await comparePassword(refreshToken, t.tokenHash);
+          if (isMatch) {
+            await db
+              .update(refreshTokens)
+              .set({ revokedAt: new Date() })
+              .where(eq(refreshTokens.id, t.id));
+          }
+        }
+      }
+    }
   }
 
   static async getProfile(userId: string) {

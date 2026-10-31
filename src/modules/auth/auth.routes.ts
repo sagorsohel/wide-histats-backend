@@ -2,7 +2,7 @@ import { Router } from "express";
 import { AuthController } from "./auth.controller.js";
 import { validateRequest } from "../../middleware/validate.middleware.js";
 import { registerSchema, loginSchema } from "./auth.schema.js";
-import { requireAuth } from "../../middleware/auth.middleware.js";
+import { requireAuth, optionalAuth } from "../../middleware/auth.middleware.js";
 import { authRateLimiter } from "../../middleware/rate-limit.middleware.js";
 
 const router = Router();
@@ -22,7 +22,7 @@ router.post(
 );
 
 router.post("/refresh", AuthController.refresh);
-router.post("/logout", requireAuth, AuthController.logout);
+router.post("/logout", optionalAuth, AuthController.logout);
 router.get("/me", requireAuth, AuthController.me);
 
 export default router;

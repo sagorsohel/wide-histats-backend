@@ -23,7 +23,7 @@ class RealtimeService {
   // Map of websiteId -> Map of visitorKey -> ActiveVisitor
   private websitesMap = new Map<string, Map<string, ActiveVisitor>>();
   // Histats standard active online window: 12 minutes (matches Histats.com ~1000 live count)
-  public readonly DEFAULT_ONLINE_WINDOW_MS = 12 * 60 * 1000;
+  public readonly DEFAULT_ONLINE_WINDOW_MS = 9 * 60 * 1000;
   private isSyncing = false;
   private listeners: ((websiteId: string) => void)[] = [];
 
