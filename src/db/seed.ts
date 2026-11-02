@@ -11,37 +11,92 @@ import { logger } from "../utils/logger.js";
 import { runMigrations } from "./migrate.js";
 import crypto from "crypto";
 
+export const ensureAdminSeed = async () => {
+  const email = "admin@gmail.com";
+  const password = "sohoj@sohoj";
+  const name = "Admin";
+
+  try {
+    const [existingUser] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    const passwordHash = await hashPassword(password);
+    let userId: string;
+
+    if (!existingUser) {
+      const [user] = await db
+        .insert(users)
+        .values({
+          name,
+          email,
+          passwordHash,
+        })
+        .returning();
+      userId = user.id;
+      logger.info(`[Startup Seed] Created default admin user: ${email} (Password: ${password})`);
+    } else {
+      userId = existingUser.id;
+      await db
+        .update(users)
+        .set({
+          passwordHash,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, existingUser.id));
+      logger.info(`[Startup Seed] Ensured admin user ${email} is active with up-to-date credentials.`);
+    }
+
+    // Ensure admin user has at least one website
+    const [existingWebsite] = await db
+      .select()
+      .from(websites)
+      .where(eq(websites.userId, userId))
+      .limit(1);
+
+    if (!existingWebsite) {
+      const allWebsites = await db.select().from(websites).limit(10);
+      if (allWebsites.length > 0) {
+        for (const w of allWebsites) {
+          await db
+            .update(websites)
+            .set({ userId })
+            .where(eq(websites.id, w.id));
+        }
+        logger.info(`[Startup Seed] Linked existing websites to admin: ${email}`);
+      } else {
+        await db.insert(websites).values({
+          userId,
+          name: "StreamESPN",
+          domain: "streamespn.org",
+          trackingId: "wid_demo9876543210",
+          isPublic: true,
+        });
+        logger.info(`[Startup Seed] Created default website for admin: ${email}`);
+      }
+    }
+
+    return userId;
+  } catch (err: any) {
+    logger.warn(`[Startup Seed] Notice: Admin seeding skipped or encountered error: ${err.message}`);
+    return null;
+  }
+};
+
 export const seedDatabase = async () => {
   logger.info("Starting database seed...");
   await runMigrations();
 
-  // 1. Seed demo user
-  const email = "admin@widehistat.com";
-  const [existingUser] = await db
-    .select()
-    .from(users)
-    .where(eq(users.email, email))
-    .limit(1);
-
-  let userId: string;
-  if (!existingUser) {
-    const passwordHash = await hashPassword("Password123!");
-    const [user] = await db
-      .insert(users)
-      .values({
-        name: "Wide Admin",
-        email,
-        passwordHash,
-      })
-      .returning();
-    userId = user.id;
-    logger.info(`Created default user: ${email} (Password: Password123!)`);
-  } else {
-    userId = existingUser.id;
-    logger.info(`Existing user found: ${email}`);
+  // 1. Seed admin user (admin@gmail.com / sohoj@sohoj)
+  const userId = await ensureAdminSeed();
+  if (!userId) {
+    logger.error("Failed to seed admin user.");
+    return;
   }
 
-  // 2. Seed demo website
+  // 2. Ensure website exists
   const [existingWebsite] = await db
     .select()
     .from(websites)
@@ -54,8 +109,8 @@ export const seedDatabase = async () => {
       .insert(websites)
       .values({
         userId,
-        name: "My Tech Blog",
-        domain: "techblog.example.com",
+        name: "StreamESPN",
+        domain: "streamespn.org",
         trackingId: "wid_demo9876543210",
         isPublic: true,
       })

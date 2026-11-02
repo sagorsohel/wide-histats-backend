@@ -3,6 +3,7 @@ import { createApp } from "./app.js";
 import { env } from "./config/env.js";
 import { initSocketServer } from "./sockets/socket.server.js";
 import { checkDatabaseConnection, pool } from "./db/index.js";
+import { ensureAdminSeed } from "./db/seed.js";
 import { AggregationService } from "./services/aggregation.service.js";
 import { logger } from "./utils/logger.js";
 
@@ -14,7 +15,11 @@ const startServer = async () => {
   initSocketServer(httpServer);
 
   // Verify DB connection
-  await checkDatabaseConnection();
+  const dbConnected = await checkDatabaseConnection();
+  if (dbConnected) {
+    // Automatically seed/ensure admin (admin@gmail.com / sohoj@sohoj) on start & restart
+    await ensureAdminSeed();
+  }
 
   // Start background daily stats aggregation service
   AggregationService.start();
