@@ -20,6 +20,7 @@ export const sessions = pgTable(
     os: text("os"),
     osVersion: text("os_version"),
     deviceType: text("device_type").default("desktop"),
+    ipAddress: text("ip_address"),
     startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
     endedAt: timestamp("ended_at", { withTimezone: true }),

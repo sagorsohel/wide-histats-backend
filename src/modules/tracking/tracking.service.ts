@@ -156,6 +156,7 @@ export class TrackingService {
             os: device.os,
             osVersion: device.osVersion,
             deviceType: device.deviceType,
+            ipAddress: ip || null,
             startedAt: now,
             lastSeenAt: now,
           })
@@ -174,11 +175,12 @@ export class TrackingService {
           .limit(1);
       }
     } else {
-      // Async update session exit page and last seen (non-blocking)
+      // Async update session exit page, last seen and ip (non-blocking)
       db.update(sessions)
         .set({
           lastSeenAt: now,
           exitPage: input.path || "/",
+          ...(ip ? { ipAddress: ip } : {}),
         })
         .where(eq(sessions.id, session.id))
         .catch(() => {});
@@ -213,6 +215,7 @@ export class TrackingService {
       browser: device.browser,
       os: device.os,
       source: attribution.source,
+      ip: ip || "127.0.0.1",
     });
 
     SocketEvents.emitPageView(website.id, {
@@ -228,6 +231,7 @@ export class TrackingService {
       os: device.os,
       deviceType: device.deviceType,
       source: attribution.source,
+      ip: ip || "127.0.0.1",
     });
 
     SocketEvents.emitVisitorActivity(website.id);

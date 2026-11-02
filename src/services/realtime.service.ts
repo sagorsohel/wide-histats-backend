@@ -15,6 +15,7 @@ export interface ActiveVisitor {
   browser: string;
   os: string;
   source: string;
+  ip?: string;
   pageviewsCount?: number;
   lastSeenAt: number; // timestamp in ms
 }
@@ -76,6 +77,7 @@ class RealtimeService {
             coalesce(s.browser, 'Other') as browser,
             coalesce(s.os, 'Other') as os,
             coalesce(s.source, 'direct') as source,
+            s.ip_address as ip,
             extract(epoch from s.last_seen_at) * 1000 as "lastSeenAt"
           FROM sessions s
           JOIN visitors v ON v.id = s.visitor_id
@@ -97,6 +99,7 @@ class RealtimeService {
             coalesce(s.browser, 'Other') as browser,
             coalesce(s.os, 'Other') as os,
             coalesce(s.source, 'direct') as source,
+            s.ip_address as ip,
             extract(epoch from s.last_seen_at) * 1000 as "lastSeenAt"
           FROM sessions s
           JOIN visitors v ON v.id = s.visitor_id
@@ -130,6 +133,7 @@ class RealtimeService {
             browser: row.browser,
             os: row.os,
             source: row.source,
+            ip: row.ip || undefined,
             lastSeenAt: lastSeen,
           });
         }

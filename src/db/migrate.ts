@@ -83,10 +83,12 @@ export const runMigrations = async () => {
         os TEXT,
         os_version TEXT,
         device_type TEXT DEFAULT 'desktop',
+        ip_address TEXT,
         started_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
         last_seen_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
         ended_at TIMESTAMPTZ
       );
+      ALTER TABLE sessions ADD COLUMN IF NOT EXISTS ip_address TEXT;
       CREATE INDEX IF NOT EXISTS session_website_started_idx ON sessions (website_id, started_at);
       CREATE INDEX IF NOT EXISTS session_visitor_idx ON sessions (visitor_id);
     `);

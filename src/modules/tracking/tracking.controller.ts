@@ -4,15 +4,23 @@ import { ApiResponse } from "../../utils/api-response.js";
 
 export class TrackingController {
   private static extractClientIp(req: Request): string {
-    const forwarded = req.headers["x-forwarded-for"];
-    if (typeof forwarded === "string") {
-      return forwarded.split(",")[0].trim();
+    const cf = req.headers["cf-connecting-ip"];
+    if (typeof cf === "string" && cf.trim()) {
+      return cf.trim().replace(/^::ffff:/, "");
     }
-    return (
-      (req.headers["x-real-ip"] as string) ||
-      req.socket.remoteAddress ||
-      "127.0.0.1"
-    );
+    const forwarded = req.headers["x-forwarded-for"];
+    if (typeof forwarded === "string" && forwarded.trim()) {
+      return forwarded.split(",")[0].trim().replace(/^::ffff:/, "");
+    }
+    const realIp = req.headers["x-real-ip"];
+    if (typeof realIp === "string" && realIp.trim()) {
+      return realIp.trim().replace(/^::ffff:/, "");
+    }
+    const remote = req.socket?.remoteAddress;
+    if (remote) {
+      return remote.replace(/^::ffff:/, "");
+    }
+    return "127.0.0.1";
   }
 
   static async pageView(req: Request, res: Response, next: NextFunction) {

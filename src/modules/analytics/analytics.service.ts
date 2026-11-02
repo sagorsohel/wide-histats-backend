@@ -211,7 +211,8 @@ export class AnalyticsService {
         coalesce(s.browser, 'Chrome') as browser,
         coalesce(s.os, 'Windows') as os,
         coalesce(s.device_type, 'desktop') as "deviceType",
-        v.visitor_key as "visitorKey"
+        v.visitor_key as "visitorKey",
+        coalesce(nullif(trim(s.ip_address), ''), '127.0.0.1') as ip
       FROM page_views pv
       LEFT JOIN visitors v ON pv.visitor_id = v.id
       LEFT JOIN visitor_locations vl ON pv.visitor_id = vl.visitor_id
