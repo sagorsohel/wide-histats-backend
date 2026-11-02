@@ -180,6 +180,10 @@ class RealtimeService {
     }
   }
 
+  getVisitorPageviews(websiteId: string, visitorKey: string): number {
+    return this.websitesMap.get(websiteId)?.get(visitorKey)?.pageviewsCount || 1;
+  }
+
   getActiveCount(websiteId: string, windowMs: number = this.DEFAULT_ONLINE_WINDOW_MS): number {
     this.cleanupWebsite(websiteId);
     const websiteVisitors = this.websitesMap.get(websiteId);

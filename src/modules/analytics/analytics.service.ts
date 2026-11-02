@@ -212,7 +212,8 @@ export class AnalyticsService {
         coalesce(s.os, 'Windows') as os,
         coalesce(s.device_type, 'desktop') as "deviceType",
         v.visitor_key as "visitorKey",
-        coalesce(nullif(trim(s.ip_address), ''), '127.0.0.1') as ip
+        coalesce(nullif(trim(s.ip_address), ''), '127.0.0.1') as ip,
+        coalesce((SELECT count(*)::int FROM page_views pv2 WHERE pv2.visitor_id = pv.visitor_id AND pv2.website_id = ${websiteId}), 1) as "hitsCount"
       FROM page_views pv
       LEFT JOIN visitors v ON pv.visitor_id = v.id
       LEFT JOIN visitor_locations vl ON pv.visitor_id = vl.visitor_id

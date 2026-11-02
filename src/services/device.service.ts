@@ -26,9 +26,13 @@ export class DeviceService {
     const device = parser.getDevice();
 
     let deviceType: DeviceInfo["deviceType"] = "desktop";
-    if (device.type === "mobile") {
+    const ua = userAgent.toLowerCase();
+    if (
+      device.type === "mobile" ||
+      /mobile|android|iphone|ipod|blackberry|opera mini|iemobile|wpdesktop|windows phone/i.test(ua)
+    ) {
       deviceType = "mobile";
-    } else if (device.type === "tablet") {
+    } else if (device.type === "tablet" || /tablet|ipad|playbook|silk/i.test(ua)) {
       deviceType = "tablet";
     }
 

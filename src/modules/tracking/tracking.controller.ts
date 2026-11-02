@@ -8,6 +8,14 @@ export class TrackingController {
     if (typeof cf === "string" && cf.trim()) {
       return cf.trim().replace(/^::ffff:/, "");
     }
+    const trueClientIp = req.headers["true-client-ip"];
+    if (typeof trueClientIp === "string" && trueClientIp.trim()) {
+      return trueClientIp.trim().replace(/^::ffff:/, "");
+    }
+    const clientIp = req.headers["x-client-ip"];
+    if (typeof clientIp === "string" && clientIp.trim()) {
+      return clientIp.trim().replace(/^::ffff:/, "");
+    }
     const forwarded = req.headers["x-forwarded-for"];
     if (typeof forwarded === "string" && forwarded.trim()) {
       return forwarded.split(",")[0].trim().replace(/^::ffff:/, "");
@@ -15,6 +23,9 @@ export class TrackingController {
     const realIp = req.headers["x-real-ip"];
     if (typeof realIp === "string" && realIp.trim()) {
       return realIp.trim().replace(/^::ffff:/, "");
+    }
+    if (req.ip && typeof req.ip === "string") {
+      return req.ip.replace(/^::ffff:/, "");
     }
     const remote = req.socket?.remoteAddress;
     if (remote) {

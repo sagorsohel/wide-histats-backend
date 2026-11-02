@@ -232,6 +232,7 @@ export class TrackingService {
       deviceType: device.deviceType,
       source: attribution.source,
       ip: ip || "127.0.0.1",
+      hitsCount: realtimeService.getVisitorPageviews(website.id, input.visitorKey),
     });
 
     SocketEvents.emitVisitorActivity(website.id);
