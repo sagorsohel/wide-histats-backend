@@ -95,6 +95,20 @@ export class AnalyticsService {
     `);
     const avgDuration = Number(durationResult.rows[0]?.avg_duration || 0);
 
+    // 5. Lifetime / All-time totals since tracking was installed
+    const allTimeResult = await db.execute(sql`
+      SELECT 
+        count(distinct visitor_id)::int as "allTimeVisitors",
+        count(*)::int as "allTimePageviews",
+        count(distinct session_id)::int as "allTimeSessions"
+      FROM page_views
+      WHERE website_id = ${filter.websiteId}
+    `);
+    const allTimeRow = allTimeResult.rows[0] as any;
+    const allTimeVisitors = Number(allTimeRow?.allTimeVisitors || 0);
+    const allTimePageviews = Number(allTimeRow?.allTimePageviews || 0);
+    const allTimeSessions = Number(allTimeRow?.allTimeSessions || 0);
+
     let activeVisitors = realtimeService.getActiveCount(filter.websiteId);
     if (activeVisitors === 0) {
       await realtimeService.syncFromDatabase(filter.websiteId);
@@ -106,6 +120,9 @@ export class AnalyticsService {
       totalPageviews,
       uniqueVisitors,
       totalSessions,
+      allTimeVisitors,
+      allTimePageviews,
+      allTimeSessions,
       pagesPerSession:
         totalSessions > 0
           ? Number((totalPageviews / totalSessions).toFixed(2))
