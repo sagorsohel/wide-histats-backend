@@ -9,8 +9,8 @@ const envSchema = z.object({
   DATABASE_URL: z.string().default("postgresql://postgres:postgres@localhost:5432/wide_histat"),
   JWT_ACCESS_SECRET: z.string().default("wide_histat_access_secret_super_secure_key_2026"),
   JWT_REFRESH_SECRET: z.string().default("wide_histat_refresh_secret_super_secure_key_2026"),
-  JWT_ACCESS_EXPIRES_IN: z.string().default("15m"),
-  JWT_REFRESH_EXPIRES_IN: z.string().default("7d"),
+  JWT_ACCESS_EXPIRES_IN: z.string().default("30d"),
+  JWT_REFRESH_EXPIRES_IN: z.string().default("90d"),
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
   TRACKER_DOMAIN: z.string().default("http://localhost:5000"),
 });

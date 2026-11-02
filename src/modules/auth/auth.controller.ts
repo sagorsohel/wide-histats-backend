@@ -17,7 +17,7 @@ export class AuthController {
       res.cookie("refreshToken", result.refreshToken, COOKIE_OPTIONS);
       res.cookie("accessToken", result.accessToken, {
         ...COOKIE_OPTIONS,
-        maxAge: 15 * 60 * 1000,
+        maxAge: 30 * 24 * 60 * 60 * 1000,
       });
       return ApiResponse.success(res, result, "Registration successful", 201);
     } catch (error: any) {
@@ -31,7 +31,7 @@ export class AuthController {
       res.cookie("refreshToken", result.refreshToken, COOKIE_OPTIONS);
       res.cookie("accessToken", result.accessToken, {
         ...COOKIE_OPTIONS,
-        maxAge: 15 * 60 * 1000,
+        maxAge: 30 * 24 * 60 * 60 * 1000,
       });
       return ApiResponse.success(res, result, "Login successful");
     } catch (error: any) {
@@ -48,7 +48,7 @@ export class AuthController {
       const result = await AuthService.refresh(token);
       res.cookie("accessToken", result.accessToken, {
         ...COOKIE_OPTIONS,
-        maxAge: 15 * 60 * 1000,
+        maxAge: 30 * 24 * 60 * 60 * 1000,
       });
       return ApiResponse.success(res, result, "Token refreshed successfully");
     } catch (error: any) {
