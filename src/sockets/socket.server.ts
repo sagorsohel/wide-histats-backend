@@ -42,9 +42,36 @@ export const initSocketServer = (httpServer: HttpServer): SocketIOServer => {
   io.on("connection", (socket: Socket) => {
     logger.debug(`Socket client connected: ${socket.id}`);
 
+    // Dynamic token authentication without reconnect
+    socket.on("auth:token", (token: string) => {
+      try {
+        if (!token) {
+          (socket as any).userId = undefined;
+          return;
+        }
+        const payload = verifyAccessToken(token);
+        if (payload) {
+          (socket as any).userId = payload.userId;
+          logger.debug(`Socket ${socket.id} dynamically authenticated for user ${payload.userId}`);
+        }
+      } catch (err: any) {
+        logger.warn(`Socket dynamic auth failed: ${err.message}`);
+      }
+    });
+
     // Join room for a specific website
     socket.on("subscribe:website", async (websiteId: string) => {
       try {
+        if (!websiteId) return;
+
+        // Leave any previously joined website rooms to guarantee 100% data isolation
+        for (const room of socket.rooms) {
+          if (room.startsWith("website:") && room !== `website:${websiteId}`) {
+            socket.leave(room);
+            logger.debug(`Socket ${socket.id} automatically left previous room ${room}`);
+          }
+        }
+
         const userId = (socket as any).userId;
 
         // Verify website exists
