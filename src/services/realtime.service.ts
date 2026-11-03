@@ -92,6 +92,7 @@ class RealtimeService {
             coalesce(s.os, 'Other') as os,
             coalesce(s.source, 'direct') as source,
             s.ip_address as ip,
+            coalesce((SELECT count(*)::int FROM page_views pv WHERE pv.session_id = s.id), 1) as "pageviewsCount",
             extract(epoch from s.last_seen_at) * 1000 as "lastSeenAt"
           FROM sessions s
           JOIN visitors v ON v.id = s.visitor_id
@@ -114,6 +115,7 @@ class RealtimeService {
             coalesce(s.os, 'Other') as os,
             coalesce(s.source, 'direct') as source,
             s.ip_address as ip,
+            coalesce((SELECT count(*)::int FROM page_views pv WHERE pv.session_id = s.id), 1) as "pageviewsCount",
             extract(epoch from s.last_seen_at) * 1000 as "lastSeenAt"
           FROM sessions s
           JOIN visitors v ON v.id = s.visitor_id
@@ -134,6 +136,7 @@ class RealtimeService {
         const siteMap = this.websitesMap.get(siteId)!;
         const existing = siteMap.get(row.visitorKey);
         const lastSeen = Number(row.lastSeenAt);
+        const pageviews = Number(row.pageviewsCount) || existing?.pageviewsCount || 1;
 
         if (!existing || existing.lastSeenAt < lastSeen) {
           siteMap.set(row.visitorKey, {
@@ -148,6 +151,7 @@ class RealtimeService {
             os: row.os,
             source: row.source,
             ip: row.ip || fallbackIp(row.visitorKey),
+            pageviewsCount: Math.max(pageviews, existing?.pageviewsCount || 1),
             lastSeenAt: lastSeen,
           });
         }
@@ -221,7 +225,12 @@ class RealtimeService {
     const cutoff = Date.now() - windowMs;
     return Array.from(websiteVisitors.values())
       .filter((v) => v.lastSeenAt >= cutoff)
-      .sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+      .sort((a, b) => {
+        const countA = a.pageviewsCount || 1;
+        const countB = b.pageviewsCount || 1;
+        if (countB !== countA) return countB - countA;
+        return b.lastSeenAt - a.lastSeenAt;
+      });
   }
 
   private cleanupWebsite(websiteId: string) {
