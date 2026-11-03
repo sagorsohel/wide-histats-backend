@@ -91,6 +91,12 @@ export const runMigrations = async () => {
       ALTER TABLE sessions ADD COLUMN IF NOT EXISTS ip_address TEXT;
       CREATE INDEX IF NOT EXISTS session_website_started_idx ON sessions (website_id, started_at);
       CREATE INDEX IF NOT EXISTS session_visitor_idx ON sessions (visitor_id);
+      CREATE INDEX IF NOT EXISTS idx_sessions_web_lastseen_desc ON sessions (website_id, last_seen_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_sessions_web_started_desc ON sessions (website_id, started_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_sessions_web_started_source ON sessions (website_id, started_at, source, medium);
+      CREATE INDEX IF NOT EXISTS idx_sessions_web_started_device ON sessions (website_id, started_at, device_type);
+      CREATE INDEX IF NOT EXISTS idx_sessions_web_started_browser ON sessions (website_id, started_at, browser);
+      CREATE INDEX IF NOT EXISTS idx_sessions_web_started_os ON sessions (website_id, started_at, os);
     `);
 
     // Page Views table
@@ -109,6 +115,10 @@ export const runMigrations = async () => {
       CREATE INDEX IF NOT EXISTS pageview_website_viewed_idx ON page_views (website_id, viewed_at);
       CREATE INDEX IF NOT EXISTS pageview_session_idx ON page_views (session_id);
       CREATE INDEX IF NOT EXISTS pageview_website_path_idx ON page_views (website_id, page_path);
+      CREATE INDEX IF NOT EXISTS idx_pageviews_web_viewed_vis_sess ON page_views (website_id, viewed_at, visitor_id, session_id);
+      CREATE INDEX IF NOT EXISTS idx_pageviews_web_visitor ON page_views (website_id, visitor_id);
+      CREATE INDEX IF NOT EXISTS idx_pageviews_web_session_viewed ON page_views (website_id, session_id, viewed_at);
+      CREATE INDEX IF NOT EXISTS idx_pageviews_web_viewed_desc ON page_views (website_id, viewed_at DESC);
     `);
 
     // Visitor Locations table

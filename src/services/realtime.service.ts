@@ -92,7 +92,7 @@ class RealtimeService {
             coalesce(s.os, 'Other') as os,
             coalesce(s.source, 'direct') as source,
             s.ip_address as ip,
-            coalesce((SELECT count(*)::int FROM page_views pv WHERE pv.session_id = s.id), 1) as "pageviewsCount",
+            1 as "pageviewsCount",
             extract(epoch from s.last_seen_at) * 1000 as "lastSeenAt"
           FROM sessions s
           JOIN visitors v ON v.id = s.visitor_id
@@ -115,7 +115,7 @@ class RealtimeService {
             coalesce(s.os, 'Other') as os,
             coalesce(s.source, 'direct') as source,
             s.ip_address as ip,
-            coalesce((SELECT count(*)::int FROM page_views pv WHERE pv.session_id = s.id), 1) as "pageviewsCount",
+            1 as "pageviewsCount",
             extract(epoch from s.last_seen_at) * 1000 as "lastSeenAt"
           FROM sessions s
           JOIN visitors v ON v.id = s.visitor_id

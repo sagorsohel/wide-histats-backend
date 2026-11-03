@@ -16,6 +16,7 @@ import { GeolocationService } from "../../services/geolocation.service.js";
 import { AttributionService } from "../../services/attribution.service.js";
 import { realtimeService } from "../../services/realtime.service.js";
 import { SocketEvents } from "../../sockets/socket.events.js";
+import { AnalyticsService } from "../analytics/analytics.service.js";
 import { logger } from "../../utils/logger.js";
 
 interface CachedWebsite {
@@ -236,6 +237,7 @@ export class TrackingService {
     });
 
     SocketEvents.emitVisitorActivity(website.id);
+    AnalyticsService.invalidateCache(website.id);
 
     return {
       status: "recorded",

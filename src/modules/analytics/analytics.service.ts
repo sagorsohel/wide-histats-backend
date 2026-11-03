@@ -1,23 +1,70 @@
-import { eq, and, gte, lte, sql, desc, count } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { websites } from "../../db/schema/websites.js";
-import { visitors } from "../../db/schema/visitors.js";
-import { sessions } from "../../db/schema/sessions.js";
-import { pageviews } from "../../db/schema/pageviews.js";
-import { visitorLocations } from "../../db/schema/visitor-locations.js";
 import { AnalyticsFilterInput } from "./analytics.schema.js";
 import { realtimeService } from "../../services/realtime.service.js";
 
+interface CacheEntry {
+  data: any;
+  expiresAt: number;
+}
+
 export class AnalyticsService {
+  // In-memory high performance micro-cache (instant 0-1ms response)
+  private static cache = new Map<string, CacheEntry>();
+
+  public static invalidateCache(websiteId?: string) {
+    if (websiteId) {
+      for (const key of this.cache.keys()) {
+        if (key.includes(websiteId)) {
+          this.cache.delete(key);
+        }
+      }
+    } else {
+      this.cache.clear();
+    }
+  }
+
+  private static getFromCache<T>(key: string): T | null {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.cache.delete(key);
+      return null;
+    }
+    return entry.data as T;
+  }
+
+  private static setInCache(key: string, data: any, ttlMs: number) {
+    this.cache.set(key, { data, expiresAt: Date.now() + ttlMs });
+    if (this.cache.size > 2000) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest) this.cache.delete(oldest);
+    }
+  }
+
+  private static parseDates(filter: AnalyticsFilterInput): { fromDate: Date; toDate: Date } {
+    const fromDate = filter.from instanceof Date ? filter.from : new Date(filter.from || Date.now() - 30 * 86400000);
+    const toDate = filter.to instanceof Date ? filter.to : new Date(filter.to || Date.now());
+    return { fromDate, toDate };
+  }
+
   static async verifyAccess(websiteId: string, userId?: string) {
-    const [website] = await db
-      .select()
-      .from(websites)
-      .where(eq(websites.id, websiteId))
-      .limit(1);
+    const cacheKey = `website_auth:${websiteId}`;
+    let website = this.getFromCache<any>(cacheKey);
 
     if (!website) {
-      throw new Error("Website not found.");
+      const [dbWebsite] = await db
+        .select()
+        .from(websites)
+        .where(eq(websites.id, websiteId))
+        .limit(1);
+
+      if (!dbWebsite) {
+        throw new Error("Website not found.");
+      }
+      website = dbWebsite;
+      this.setInCache(cacheKey, website, 60000); // 1 minute TTL
     }
 
     if (!website.isPublic && (!userId || website.userId !== userId)) {
@@ -30,81 +77,85 @@ export class AnalyticsService {
   static async getOverview(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
 
-    const dateFilter = and(
-      eq(pageviews.websiteId, filter.websiteId),
-      gte(pageviews.viewedAt, filter.from),
-      lte(pageviews.viewedAt, filter.to)
-    );
+    const fromDate = filter.from instanceof Date ? filter.from : new Date(filter.from || Date.now() - 30 * 86400000);
+    const toDate = filter.to instanceof Date ? filter.to : new Date(filter.to || Date.now());
 
-    // 1. Total pageviews
-    const [pvResult] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(pageviews)
-      .where(dateFilter);
+    const cacheKey = `overview:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}`;
+    const cached = this.getFromCache<any>(cacheKey);
+    if (cached) {
+      cached.activeVisitors = realtimeService.getActiveCount(filter.websiteId);
+      return cached;
+    }
 
-    // 2. Unique visitors
-    const [uvResult] = await db
-      .select({ count: sql<number>`count(distinct ${pageviews.visitorId})::int` })
-      .from(pageviews)
-      .where(dateFilter);
+    const allTimeCacheKey = `alltime:${filter.websiteId}`;
+    let allTimeRow = this.getFromCache<any>(allTimeCacheKey);
 
-    // 3. Sessions
-    const sessionDateFilter = and(
-      eq(sessions.websiteId, filter.websiteId),
-      gte(sessions.startedAt, filter.from),
-      lte(sessions.startedAt, filter.to)
-    );
-
-    const [sessResult] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(sessions)
-      .where(sessionDateFilter);
-
-    const totalPageviews = pvResult?.count || 0;
-    const uniqueVisitors = uvResult?.count || 0;
-    const totalSessions = sessResult?.count || 0;
-
-    // 4. Calculate Bounce Rate & Avg Duration
-    const bounceCountResult = await db.execute(sql`
-      SELECT count(*)::int as single_page_sessions
-      FROM (
-        SELECT session_id
+    // Consolidated concurrent execution of queries in parallel
+    const queries: Promise<any>[] = [
+      db.execute(sql`
+        SELECT 
+          count(*)::int as "totalPageviews",
+          count(distinct visitor_id)::int as "uniqueVisitors"
         FROM page_views
         WHERE website_id = ${filter.websiteId}
-          AND viewed_at >= ${filter.from}
-          AND viewed_at <= ${filter.to}
-        GROUP BY session_id
-        HAVING count(*) = 1
-      ) s
-    `);
-    const singlePageSessions = Number(
-      bounceCountResult.rows[0]?.single_page_sessions || 0
-    );
+          AND viewed_at >= ${fromDate}
+          AND viewed_at <= ${toDate}
+      `),
+      db.execute(sql`
+        SELECT 
+          count(*)::int as "totalSessions",
+          coalesce(avg(extract(epoch from (last_seen_at - started_at))), 0)::int as "avgDuration"
+        FROM sessions
+        WHERE website_id = ${filter.websiteId}
+          AND started_at >= ${fromDate}
+          AND started_at <= ${toDate}
+      `),
+      db.execute(sql`
+        SELECT count(*)::int as single_page_sessions
+        FROM (
+          SELECT session_id
+          FROM page_views
+          WHERE website_id = ${filter.websiteId}
+            AND viewed_at >= ${fromDate}
+            AND viewed_at <= ${toDate}
+          GROUP BY session_id
+          HAVING count(*) = 1
+        ) s
+      `),
+    ];
+
+    if (!allTimeRow) {
+      queries.push(
+        db.execute(sql`
+          SELECT 
+            count(distinct visitor_id)::int as "allTimeVisitors",
+            count(*)::int as "allTimePageviews",
+            count(distinct session_id)::int as "allTimeSessions"
+          FROM page_views
+          WHERE website_id = ${filter.websiteId}
+        `)
+      );
+    }
+
+    const results = await Promise.all(queries);
+    const pvRow = results[0]?.rows[0] as any;
+    const sessRow = results[1]?.rows[0] as any;
+    const bounceRow = results[2]?.rows[0] as any;
+    if (!allTimeRow && results[3]) {
+      allTimeRow = results[3].rows[0] as any;
+      this.setInCache(allTimeCacheKey, allTimeRow, 300000); // 5 minutes TTL
+    }
+
+    const totalPageviews = Number(pvRow?.totalPageviews || 0);
+    const uniqueVisitors = Number(pvRow?.uniqueVisitors || 0);
+    const totalSessions = Number(sessRow?.totalSessions || 0);
+    const avgDuration = Number(sessRow?.avgDuration || 0);
+    const singlePageSessions = Number(bounceRow?.single_page_sessions || 0);
     const bounceRate =
       totalSessions > 0
         ? Math.round((singlePageSessions / totalSessions) * 100)
         : 0;
 
-    // Avg duration in seconds
-    const durationResult = await db.execute(sql`
-      SELECT coalesce(avg(extract(epoch from (last_seen_at - started_at))), 0)::int as avg_duration
-      FROM sessions
-      WHERE website_id = ${filter.websiteId}
-        AND started_at >= ${filter.from}
-        AND started_at <= ${filter.to}
-    `);
-    const avgDuration = Number(durationResult.rows[0]?.avg_duration || 0);
-
-    // 5. Lifetime / All-time totals since tracking was installed
-    const allTimeResult = await db.execute(sql`
-      SELECT 
-        count(distinct visitor_id)::int as "allTimeVisitors",
-        count(*)::int as "allTimePageviews",
-        count(distinct session_id)::int as "allTimeSessions"
-      FROM page_views
-      WHERE website_id = ${filter.websiteId}
-    `);
-    const allTimeRow = allTimeResult.rows[0] as any;
     const allTimeVisitors = Number(allTimeRow?.allTimeVisitors || 0);
     const allTimePageviews = Number(allTimeRow?.allTimePageviews || 0);
     const allTimeSessions = Number(allTimeRow?.allTimeSessions || 0);
@@ -115,7 +166,7 @@ export class AnalyticsService {
       activeVisitors = realtimeService.getActiveCount(filter.websiteId);
     }
 
-    return {
+    const overviewData = {
       activeVisitors,
       totalPageviews,
       uniqueVisitors,
@@ -132,10 +183,23 @@ export class AnalyticsService {
       from: filter.from,
       to: filter.to,
     };
+
+    this.setInCache(cacheKey, overviewData, 8000); // 8 seconds TTL
+    return overviewData;
   }
 
   static async getRealtime(userId: string | undefined, websiteId: string) {
     await this.verifyAccess(websiteId, userId);
+
+    const cacheKey = `realtime:${websiteId}`;
+    const cached = this.getFromCache<any>(cacheKey);
+    if (cached) {
+      cached.activeCount = realtimeService.getActiveCount(websiteId);
+      cached.activeCount5m = realtimeService.getActiveCount(websiteId, 5 * 60 * 1000);
+      cached.activeCount15m = realtimeService.getActiveCount(websiteId, 15 * 60 * 1000);
+      cached.activeVisitors = realtimeService.getActiveVisitors(websiteId);
+      return cached;
+    }
 
     let activeCount = realtimeService.getActiveCount(websiteId);
     if (activeCount === 0) {
@@ -144,7 +208,7 @@ export class AnalyticsService {
     }
     const visitorsList = realtimeService.getActiveVisitors(websiteId);
 
-    // In-memory active page and visitor counts
+    // In-memory active page and visitor counts (0ms instant)
     const activePageCounts: Record<string, number> = {};
     const countriesMap: Record<string, { country: string; code: string; count: number }> = {};
     const devicesMap: Record<string, number> = {};
@@ -169,22 +233,99 @@ export class AnalyticsService {
       (a, b) => b.count - a.count
     );
 
-    // Query top pages with Title and full URL (REAL-TIME ACTIVE VISITORS ONLINE RIGHT NOW)
-    const topPagesResult = await db.execute(sql`
-      SELECT 
-        coalesce(s.exit_page, s.landing_page, '/') as path,
-        coalesce(nullif(max(pv.page_title), ''), max(s.exit_page), '/') as title,
-        coalesce(max(pv.page_url), '') as url,
-        count(distinct s.visitor_id)::int as count
-      FROM sessions s
-      LEFT JOIN page_views pv ON pv.session_id = s.id 
-        AND pv.page_path = coalesce(s.exit_page, s.landing_page, '/')
-      WHERE s.website_id = ${websiteId}
-        AND s.last_seen_at >= now() - interval '12 minutes'
-      GROUP BY coalesce(s.exit_page, s.landing_page, '/')
-      ORDER BY count DESC
-      LIMIT 15;
-    `);
+    const allTimeCacheKey = `alltime:${websiteId}`;
+    let allTimeRow = this.getFromCache<any>(allTimeCacheKey);
+
+    // Parallel execution of realtime queries with covering indexes!
+    const queries: Promise<any>[] = [
+      db.execute(sql`
+        SELECT 
+          coalesce(s.exit_page, s.landing_page, '/') as path,
+          coalesce(nullif(max(pv.page_title), ''), max(s.exit_page), '/') as title,
+          coalesce(max(pv.page_url), '') as url,
+          count(distinct s.visitor_id)::int as count
+        FROM sessions s
+        LEFT JOIN page_views pv ON pv.session_id = s.id 
+          AND pv.page_path = coalesce(s.exit_page, s.landing_page, '/')
+        WHERE s.website_id = ${websiteId}
+          AND s.last_seen_at >= now() - interval '12 minutes'
+        GROUP BY coalesce(s.exit_page, s.landing_page, '/')
+        ORDER BY count DESC
+        LIMIT 15;
+      `),
+      db.execute(sql`
+        SELECT count(distinct coalesce(s.exit_page, s.landing_page, '/'))::int as "browsingPagesCount"
+        FROM sessions s
+        WHERE s.website_id = ${websiteId}
+          AND s.last_seen_at >= now() - interval '12 minutes';
+      `),
+      db.execute(sql`
+        SELECT 
+          pv.id,
+          pv.page_path as path,
+          pv.page_title as title,
+          pv.page_url as url,
+          pv.referrer,
+          pv.viewed_at as "viewedAt",
+          coalesce(vl.country, 'Unknown') as country,
+          coalesce(vl.country_code, 'UNKNOWN') as "countryCode",
+          coalesce(vl.city, '') as city,
+          coalesce(s.browser, 'Chrome') as browser,
+          coalesce(s.os, 'Windows') as os,
+          coalesce(s.device_type, 'desktop') as "deviceType",
+          v.visitor_key as "visitorKey",
+          coalesce(nullif(trim(s.ip_address), ''), '127.0.0.1') as ip
+        FROM page_views pv
+        LEFT JOIN visitors v ON pv.visitor_id = v.id
+        LEFT JOIN visitor_locations vl ON pv.visitor_id = vl.visitor_id
+        LEFT JOIN sessions s ON pv.session_id = s.id
+        WHERE pv.website_id = ${websiteId}
+        ORDER BY pv.viewed_at DESC
+        LIMIT 30;
+      `),
+      db.execute(sql`
+        SELECT 
+          coalesce(nullif(trim(s.referrer), ''), s.source, 'direct') as referrer,
+          count(distinct s.visitor_id)::int as count
+        FROM sessions s
+        WHERE s.website_id = ${websiteId}
+          AND s.last_seen_at >= now() - interval '12 minutes'
+        GROUP BY coalesce(nullif(trim(s.referrer), ''), s.source, 'direct')
+        ORDER BY count DESC
+        LIMIT 10;
+      `),
+      db.execute(sql`
+        SELECT 
+          count(distinct visitor_id)::int as "todayVisitors",
+          count(*)::int as "todayPageviews"
+        FROM page_views
+        WHERE website_id = ${websiteId}
+          AND viewed_at >= date_trunc('day', now())
+      `),
+    ];
+
+    if (!allTimeRow) {
+      queries.push(
+        db.execute(sql`
+          SELECT 
+            count(distinct visitor_id)::int as "totalVisitors",
+            count(*)::int as "totalPageviews"
+          FROM page_views
+          WHERE website_id = ${websiteId}
+        `)
+      );
+    }
+
+    const results = await Promise.all(queries);
+    const topPagesResult = results[0];
+    const browsingPagesResult = results[1];
+    const recentResult = results[2];
+    const topReferrersResult = results[3];
+    const todayResult = results[4];
+    if (!allTimeRow && results[5]) {
+      allTimeRow = results[5].rows[0] as any;
+      this.setInCache(allTimeCacheKey, allTimeRow, 300000); // 5 minutes TTL
+    }
 
     const topPages = (topPagesResult.rows.length > 0
       ? topPagesResult.rows.map((r: any) => ({
@@ -202,104 +343,53 @@ export class AnalyticsService {
             count,
           };
         })
-    ).sort((a, b) => b.count - a.count);
+    ).sort((a: any, b: any) => b.count - a.count);
 
-    // Browsing pages count: total distinct pages currently being visited right now
-    const browsingPagesResult = await db.execute(sql`
-      SELECT count(distinct coalesce(s.exit_page, s.landing_page, '/'))::int as "browsingPagesCount"
-      FROM sessions s
-      WHERE s.website_id = ${websiteId}
-        AND s.last_seen_at >= now() - interval '12 minutes';
-    `);
     const browsingPagesCount = Number(browsingPagesResult.rows[0]?.browsingPagesCount || topPages.length);
 
-    // Recent 30 pageviews with visitor location, device info & full URL
-    const recentResult = await db.execute(sql`
-      SELECT 
-        pv.id,
-        pv.page_path as path,
-        pv.page_title as title,
-        pv.page_url as url,
-        pv.referrer,
-        pv.viewed_at as "viewedAt",
-        coalesce(vl.country, 'Unknown') as country,
-        coalesce(vl.country_code, 'UNKNOWN') as "countryCode",
-        coalesce(vl.city, '') as city,
-        coalesce(s.browser, 'Chrome') as browser,
-        coalesce(s.os, 'Windows') as os,
-        coalesce(s.device_type, 'desktop') as "deviceType",
-        v.visitor_key as "visitorKey",
-        coalesce(nullif(trim(s.ip_address), ''), '127.0.0.1') as ip,
-        coalesce((SELECT count(*)::int FROM page_views pv2 WHERE pv2.visitor_id = pv.visitor_id AND pv2.website_id = ${websiteId}), 1) as "hitsCount"
-      FROM page_views pv
-      LEFT JOIN visitors v ON pv.visitor_id = v.id
-      LEFT JOIN visitor_locations vl ON pv.visitor_id = vl.visitor_id
-      LEFT JOIN sessions s ON pv.session_id = s.id
-      WHERE pv.website_id = ${websiteId}
-      ORDER BY pv.viewed_at DESC
-      LIMIT 30
-    `);
-
-    // Top Referrers of Active Visitors Online Right Now (12-minute window)
-    const topReferrersResult = await db.execute(sql`
-      SELECT 
-        coalesce(nullif(trim(s.referrer), ''), s.source, 'direct') as referrer,
-        count(distinct s.visitor_id)::int as count
-      FROM sessions s
-      WHERE s.website_id = ${websiteId}
-        AND s.last_seen_at >= now() - interval '12 minutes'
-      GROUP BY coalesce(nullif(trim(s.referrer), ''), s.source, 'direct')
-      ORDER BY count DESC
-      LIMIT 10;
-    `);
+    // Attach hitsCount quickly from realtimeService RAM cache (0ms)
+    const recentPageviews = recentResult.rows.map((r: any) => ({
+      ...r,
+      hitsCount: realtimeService.getVisitorPageviews(websiteId, r.visitorKey) || 1,
+    }));
 
     const topReferrers = topReferrersResult.rows.map((r: any) => ({
       referrer: r.referrer as string,
       count: Number(r.count),
     }));
 
-    // Query Today totals and All-time totals
-    const todayResult = await db.execute(sql`
-      SELECT 
-        count(distinct visitor_id)::int as "todayVisitors",
-        count(*)::int as "todayPageviews"
-      FROM page_views
-      WHERE website_id = ${websiteId}
-        AND viewed_at >= date_trunc('day', now())
-    `);
-
-    const totalResult = await db.execute(sql`
-      SELECT 
-        count(distinct visitor_id)::int as "totalVisitors",
-        count(*)::int as "totalPageviews"
-      FROM page_views
-      WHERE website_id = ${websiteId}
-    `);
-
     const activeCount5m = realtimeService.getActiveCount(websiteId, 5 * 60 * 1000);
     const activeCount15m = realtimeService.getActiveCount(websiteId, 15 * 60 * 1000);
 
-    return {
+    const realtimeData = {
       activeCount,
       activeCount5m,
       activeCount15m,
       browsingPagesCount,
       todayVisitors: Number((todayResult.rows[0] as any)?.todayVisitors || 0),
       todayPageviews: Number((todayResult.rows[0] as any)?.todayPageviews || 0),
-      totalVisitors: Number((totalResult.rows[0] as any)?.totalVisitors || 0),
-      totalPageviews: Number((totalResult.rows[0] as any)?.totalPageviews || 0),
+      totalVisitors: Number(allTimeRow?.totalVisitors || 0),
+      totalPageviews: Number(allTimeRow?.totalPageviews || 0),
       activeVisitors: visitorsList,
       topPages,
       topCountries,
       topReferrers,
       devices: devicesMap,
       sources: sourcesMap,
-      recentPageviews: recentResult.rows,
+      recentPageviews,
     };
+
+    this.setInCache(cacheKey, realtimeData, 2000); // 2 seconds TTL
+    return realtimeData;
   }
 
   static async getTimeseries(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
+
+    const { fromDate, toDate } = this.parseDates(filter);
+    const cacheKey = `timeseries:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}`;
+    const cached = this.getFromCache<any>(cacheKey);
+    if (cached) return cached;
 
     const result = await db.execute(sql`
       SELECT 
@@ -309,110 +399,131 @@ export class AnalyticsService {
         count(distinct session_id)::int as sessions
       FROM page_views
       WHERE website_id = ${filter.websiteId}
-        AND viewed_at >= ${filter.from}
-        AND viewed_at <= ${filter.to}
+        AND viewed_at >= ${fromDate}
+        AND viewed_at <= ${toDate}
       GROUP BY to_char(viewed_at, 'YYYY-MM-DD')
-      ORDER BY date ASC
+      ORDER BY date ASC;
     `);
 
+    this.setInCache(cacheKey, result.rows, 10000);
     return result.rows;
   }
 
   static async getGeography(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
 
-    const countries = await db.execute(sql`
-      SELECT 
-        coalesce(vl.country, 'Unknown') as country,
-        coalesce(vl.country_code, 'UNKNOWN') as country_code,
-        count(distinct pv.visitor_id)::int as visitors,
-        count(pv.id)::int as pageviews
-      FROM page_views pv
-      LEFT JOIN visitor_locations vl ON pv.visitor_id = vl.visitor_id
-      WHERE pv.website_id = ${filter.websiteId}
-        AND pv.viewed_at >= ${filter.from}
-        AND pv.viewed_at <= ${filter.to}
-      GROUP BY vl.country, vl.country_code
-      ORDER BY visitors DESC
-      LIMIT ${filter.limit}
-    `);
+    const { fromDate, toDate } = this.parseDates(filter);
+    const cacheKey = `geo:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const cached = this.getFromCache<any>(cacheKey);
+    if (cached) return cached;
 
-    const cities = await db.execute(sql`
-      SELECT 
-        coalesce(vl.city, 'Unknown') as city,
-        coalesce(vl.country, 'Unknown') as country,
-        count(distinct pv.visitor_id)::int as visitors
-      FROM page_views pv
-      LEFT JOIN visitor_locations vl ON pv.visitor_id = vl.visitor_id
-      WHERE pv.website_id = ${filter.websiteId}
-        AND pv.viewed_at >= ${filter.from}
-        AND pv.viewed_at <= ${filter.to}
-        AND vl.city IS NOT NULL AND vl.city != ''
-      GROUP BY vl.city, vl.country
-      ORDER BY visitors DESC
-      LIMIT ${filter.limit}
-    `);
+    const [countries, cities] = await Promise.all([
+      db.execute(sql`
+        SELECT 
+          coalesce(vl.country, 'Unknown') as country,
+          coalesce(vl.country_code, 'UNKNOWN') as country_code,
+          count(distinct pv.visitor_id)::int as visitors,
+          count(pv.id)::int as pageviews
+        FROM page_views pv
+        LEFT JOIN visitor_locations vl ON pv.visitor_id = vl.visitor_id
+        WHERE pv.website_id = ${filter.websiteId}
+          AND pv.viewed_at >= ${fromDate}
+          AND pv.viewed_at <= ${toDate}
+        GROUP BY vl.country, vl.country_code
+        ORDER BY visitors DESC
+        LIMIT ${filter.limit};
+      `),
+      db.execute(sql`
+        SELECT 
+          coalesce(vl.city, 'Unknown') as city,
+          coalesce(vl.country, 'Unknown') as country,
+          count(distinct pv.visitor_id)::int as visitors
+        FROM page_views pv
+        LEFT JOIN visitor_locations vl ON pv.visitor_id = vl.visitor_id
+        WHERE pv.website_id = ${filter.websiteId}
+          AND pv.viewed_at >= ${fromDate}
+          AND pv.viewed_at <= ${toDate}
+          AND vl.city IS NOT NULL AND vl.city != ''
+        GROUP BY vl.city, vl.country
+        ORDER BY visitors DESC
+        LIMIT ${filter.limit};
+      `),
+    ]);
 
-    return {
+    const data = {
       countries: countries.rows,
       cities: cities.rows,
     };
+    this.setInCache(cacheKey, data, 10000);
+    return data;
   }
 
   static async getSources(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
 
-    const sources = await db.execute(sql`
-      SELECT 
-        source,
-        medium,
-        count(*)::int as sessions,
-        count(distinct visitor_id)::int as visitors
-      FROM sessions
-      WHERE website_id = ${filter.websiteId}
-        AND started_at >= ${filter.from}
-        AND started_at <= ${filter.to}
-      GROUP BY source, medium
-      ORDER BY sessions DESC
-      LIMIT ${filter.limit}
-    `);
+    const { fromDate, toDate } = this.parseDates(filter);
+    const cacheKey = `sources:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const cached = this.getFromCache<any>(cacheKey);
+    if (cached) return cached;
 
-    const referrers = await db.execute(sql`
-      SELECT 
-        coalesce(referrer, 'Direct / None') as referrer,
-        count(*)::int as count
-      FROM page_views
-      WHERE website_id = ${filter.websiteId}
-        AND viewed_at >= ${filter.from}
-        AND viewed_at <= ${filter.to}
-      GROUP BY referrer
-      ORDER BY count DESC
-      LIMIT ${filter.limit}
-    `);
+    const [sources, referrers, campaigns] = await Promise.all([
+      db.execute(sql`
+        SELECT 
+          source,
+          medium,
+          count(*)::int as sessions,
+          count(distinct visitor_id)::int as visitors
+        FROM sessions
+        WHERE website_id = ${filter.websiteId}
+          AND started_at >= ${fromDate}
+          AND started_at <= ${toDate}
+        GROUP BY source, medium
+        ORDER BY sessions DESC
+        LIMIT ${filter.limit};
+      `),
+      db.execute(sql`
+        SELECT 
+          coalesce(referrer, 'Direct / None') as referrer,
+          count(*)::int as count
+        FROM page_views
+        WHERE website_id = ${filter.websiteId}
+          AND viewed_at >= ${fromDate}
+          AND viewed_at <= ${toDate}
+        GROUP BY referrer
+        ORDER BY count DESC
+        LIMIT ${filter.limit};
+      `),
+      db.execute(sql`
+        SELECT 
+          campaign,
+          count(*)::int as sessions
+        FROM sessions
+        WHERE website_id = ${filter.websiteId}
+          AND started_at >= ${fromDate}
+          AND started_at <= ${toDate}
+          AND campaign IS NOT NULL AND campaign != ''
+        GROUP BY campaign
+        ORDER BY sessions DESC
+        LIMIT ${filter.limit};
+      `),
+    ]);
 
-    const campaigns = await db.execute(sql`
-      SELECT 
-        campaign,
-        count(*)::int as sessions
-      FROM sessions
-      WHERE website_id = ${filter.websiteId}
-        AND started_at >= ${filter.from}
-        AND started_at <= ${filter.to}
-        AND campaign IS NOT NULL AND campaign != ''
-      GROUP BY campaign
-      ORDER BY sessions DESC
-      LIMIT ${filter.limit}
-    `);
-
-    return {
+    const data = {
       sources: sources.rows,
       referrers: referrers.rows,
       campaigns: campaigns.rows,
     };
+    this.setInCache(cacheKey, data, 10000);
+    return data;
   }
 
   static async getPages(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
+
+    const { fromDate, toDate } = this.parseDates(filter);
+    const cacheKey = `pages:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const cached = this.getFromCache<any>(cacheKey);
+    if (cached) return cached;
 
     const pages = await db.execute(sql`
       SELECT 
@@ -422,18 +533,24 @@ export class AnalyticsService {
         count(distinct visitor_id)::int as visitors
       FROM page_views
       WHERE website_id = ${filter.websiteId}
-        AND viewed_at >= ${filter.from}
-        AND viewed_at <= ${filter.to}
+        AND viewed_at >= ${fromDate}
+        AND viewed_at <= ${toDate}
       GROUP BY page_path
       ORDER BY pageviews DESC
-      LIMIT ${filter.limit}
+      LIMIT ${filter.limit};
     `);
 
+    this.setInCache(cacheKey, pages.rows, 10000);
     return pages.rows;
   }
 
   static async getLandingPages(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
+
+    const { fromDate, toDate } = this.parseDates(filter);
+    const cacheKey = `landing:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const cached = this.getFromCache<any>(cacheKey);
+    if (cached) return cached;
 
     const landing = await db.execute(sql`
       SELECT 
@@ -441,19 +558,25 @@ export class AnalyticsService {
         count(*)::int as sessions
       FROM sessions
       WHERE website_id = ${filter.websiteId}
-        AND started_at >= ${filter.from}
-        AND started_at <= ${filter.to}
+        AND started_at >= ${fromDate}
+        AND started_at <= ${toDate}
         AND landing_page IS NOT NULL
       GROUP BY landing_page
       ORDER BY sessions DESC
-      LIMIT ${filter.limit}
+      LIMIT ${filter.limit};
     `);
 
+    this.setInCache(cacheKey, landing.rows, 10000);
     return landing.rows;
   }
 
   static async getExitPages(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
+
+    const { fromDate, toDate } = this.parseDates(filter);
+    const cacheKey = `exit:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const cached = this.getFromCache<any>(cacheKey);
+    if (cached) return cached;
 
     const exit = await db.execute(sql`
       SELECT 
@@ -461,19 +584,25 @@ export class AnalyticsService {
         count(*)::int as sessions
       FROM sessions
       WHERE website_id = ${filter.websiteId}
-        AND started_at >= ${filter.from}
-        AND started_at <= ${filter.to}
+        AND started_at >= ${fromDate}
+        AND started_at <= ${toDate}
         AND exit_page IS NOT NULL
       GROUP BY exit_page
       ORDER BY sessions DESC
-      LIMIT ${filter.limit}
+      LIMIT ${filter.limit};
     `);
 
+    this.setInCache(cacheKey, exit.rows, 10000);
     return exit.rows;
   }
 
   static async getDevices(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
+
+    const { fromDate, toDate } = this.parseDates(filter);
+    const cacheKey = `devices:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}`;
+    const cached = this.getFromCache<any>(cacheKey);
+    if (cached) return cached;
 
     const devices = await db.execute(sql`
       SELECT 
@@ -482,17 +611,23 @@ export class AnalyticsService {
         count(distinct visitor_id)::int as visitors
       FROM sessions
       WHERE website_id = ${filter.websiteId}
-        AND started_at >= ${filter.from}
-        AND started_at <= ${filter.to}
+        AND started_at >= ${fromDate}
+        AND started_at <= ${toDate}
       GROUP BY device_type
-      ORDER BY sessions DESC
+      ORDER BY sessions DESC;
     `);
 
+    this.setInCache(cacheKey, devices.rows, 10000);
     return devices.rows;
   }
 
   static async getBrowsers(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
+
+    const { fromDate, toDate } = this.parseDates(filter);
+    const cacheKey = `browsers:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const cached = this.getFromCache<any>(cacheKey);
+    if (cached) return cached;
 
     const browsers = await db.execute(sql`
       SELECT 
@@ -501,18 +636,24 @@ export class AnalyticsService {
         count(distinct visitor_id)::int as visitors
       FROM sessions
       WHERE website_id = ${filter.websiteId}
-        AND started_at >= ${filter.from}
-        AND started_at <= ${filter.to}
+        AND started_at >= ${fromDate}
+        AND started_at <= ${toDate}
       GROUP BY browser
       ORDER BY sessions DESC
-      LIMIT ${filter.limit}
+      LIMIT ${filter.limit};
     `);
 
+    this.setInCache(cacheKey, browsers.rows, 10000);
     return browsers.rows;
   }
 
   static async getOperatingSystems(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
+
+    const { fromDate, toDate } = this.parseDates(filter);
+    const cacheKey = `os:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const cached = this.getFromCache<any>(cacheKey);
+    if (cached) return cached;
 
     const os = await db.execute(sql`
       SELECT 
@@ -521,13 +662,14 @@ export class AnalyticsService {
         count(distinct visitor_id)::int as visitors
       FROM sessions
       WHERE website_id = ${filter.websiteId}
-        AND started_at >= ${filter.from}
-        AND started_at <= ${filter.to}
+        AND started_at >= ${fromDate}
+        AND started_at <= ${toDate}
       GROUP BY os
       ORDER BY sessions DESC
-      LIMIT ${filter.limit}
+      LIMIT ${filter.limit};
     `);
 
+    this.setInCache(cacheKey, os.rows, 10000);
     return os.rows;
   }
 }
