@@ -48,6 +48,8 @@ export const runMigrations = async () => {
         created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
         updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
       );
+      ALTER TABLE websites ADD COLUMN IF NOT EXISTS timezone TEXT DEFAULT 'UTC';
+      ALTER TABLE websites ADD COLUMN IF NOT EXISTS country TEXT DEFAULT 'Worldwide';
       CREATE INDEX IF NOT EXISTS website_user_idx ON websites (user_id);
     `);
 
