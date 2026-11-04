@@ -237,7 +237,6 @@ export class TrackingService {
     });
 
     SocketEvents.emitVisitorActivity(website.id);
-    AnalyticsService.invalidateCache(website.id);
 
     return {
       status: "recorded",

@@ -43,10 +43,26 @@ export class AnalyticsService {
     }
   }
 
-  private static parseDates(filter: AnalyticsFilterInput): { fromDate: Date; toDate: Date } {
+  private static parseDates(filter: AnalyticsFilterInput): {
+    fromDate: Date;
+    toDate: Date;
+    cacheFrom: string;
+    cacheTo: string;
+  } {
     const fromDate = filter.from instanceof Date ? filter.from : new Date(filter.from || Date.now() - 30 * 86400000);
     const toDate = filter.to instanceof Date ? filter.to : new Date(filter.to || Date.now());
-    return { fromDate, toDate };
+
+    // Round timestamps to 30-second buckets so repeated requests in the same time frame hit memory cache in 0ms
+    const BUCKET_MS = 30000;
+    const bucketedFrom = Math.floor(fromDate.getTime() / BUCKET_MS) * BUCKET_MS;
+    const bucketedTo = Math.floor(toDate.getTime() / BUCKET_MS) * BUCKET_MS;
+
+    return {
+      fromDate,
+      toDate,
+      cacheFrom: new Date(bucketedFrom).toISOString(),
+      cacheTo: new Date(bucketedTo).toISOString(),
+    };
   }
 
   static async verifyAccess(websiteId: string, userId?: string) {
@@ -79,10 +95,9 @@ export class AnalyticsService {
   static async getOverview(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
 
-    const fromDate = filter.from instanceof Date ? filter.from : new Date(filter.from || Date.now() - 30 * 86400000);
-    const toDate = filter.to instanceof Date ? filter.to : new Date(filter.to || Date.now());
+    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
 
-    const cacheKey = `overview:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}`;
+    const cacheKey = `overview:${filter.websiteId}:${cacheFrom}:${cacheTo}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) {
       cached.activeVisitors = realtimeService.getActiveCount(filter.websiteId);
@@ -186,7 +201,7 @@ export class AnalyticsService {
       to: filter.to,
     };
 
-    this.setInCache(cacheKey, overviewData, 8000); // 8 seconds TTL
+    this.setInCache(cacheKey, overviewData, 30000); // 30 seconds TTL
     return overviewData;
   }
 
@@ -388,8 +403,8 @@ export class AnalyticsService {
   static async getTimeseries(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
 
-    const { fromDate, toDate } = this.parseDates(filter);
-    const cacheKey = `timeseries:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}`;
+    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const cacheKey = `timeseries:${filter.websiteId}:${cacheFrom}:${cacheTo}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
@@ -407,15 +422,15 @@ export class AnalyticsService {
       ORDER BY date ASC;
     `);
 
-    this.setInCache(cacheKey, result.rows, 10000);
+    this.setInCache(cacheKey, result.rows, 30000); // 30 seconds TTL
     return result.rows;
   }
 
   static async getGeography(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
 
-    const { fromDate, toDate } = this.parseDates(filter);
-    const cacheKey = `geo:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const cacheKey = `geo:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
@@ -456,7 +471,7 @@ export class AnalyticsService {
       countries: countries.rows,
       cities: cities.rows,
     };
-    this.setInCache(cacheKey, data, 10000);
+    this.setInCache(cacheKey, data, 30000); // 30 seconds TTL
     return data;
   }
 
@@ -471,8 +486,8 @@ export class AnalyticsService {
   static async getSources(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
 
-    const { fromDate, toDate } = this.parseDates(filter);
-    const cacheKey = `sources:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const cacheKey = `sources:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
@@ -630,15 +645,15 @@ export class AnalyticsService {
       campaigns: campaignsRes.rows,
     };
 
-    this.setInCache(cacheKey, data, 10000);
+    this.setInCache(cacheKey, data, 30000); // 30 seconds TTL
     return data;
   }
 
   static async getPages(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
 
-    const { fromDate, toDate } = this.parseDates(filter);
-    const cacheKey = `pages:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const cacheKey = `pages:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
@@ -657,15 +672,15 @@ export class AnalyticsService {
       LIMIT ${filter.limit};
     `);
 
-    this.setInCache(cacheKey, pages.rows, 10000);
+    this.setInCache(cacheKey, pages.rows, 30000); // 30 seconds TTL
     return pages.rows;
   }
 
   static async getLandingPages(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
 
-    const { fromDate, toDate } = this.parseDates(filter);
-    const cacheKey = `landing:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const cacheKey = `landing:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
@@ -683,15 +698,15 @@ export class AnalyticsService {
       LIMIT ${filter.limit};
     `);
 
-    this.setInCache(cacheKey, landing.rows, 10000);
+    this.setInCache(cacheKey, landing.rows, 30000); // 30 seconds TTL
     return landing.rows;
   }
 
   static async getExitPages(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
 
-    const { fromDate, toDate } = this.parseDates(filter);
-    const cacheKey = `exit:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const cacheKey = `exit:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
@@ -709,15 +724,15 @@ export class AnalyticsService {
       LIMIT ${filter.limit};
     `);
 
-    this.setInCache(cacheKey, exit.rows, 10000);
+    this.setInCache(cacheKey, exit.rows, 30000); // 30 seconds TTL
     return exit.rows;
   }
 
   static async getDevices(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
 
-    const { fromDate, toDate } = this.parseDates(filter);
-    const cacheKey = `devices:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}`;
+    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const cacheKey = `devices:${filter.websiteId}:${cacheFrom}:${cacheTo}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
@@ -734,15 +749,15 @@ export class AnalyticsService {
       ORDER BY sessions DESC;
     `);
 
-    this.setInCache(cacheKey, devices.rows, 10000);
+    this.setInCache(cacheKey, devices.rows, 30000); // 30 seconds TTL
     return devices.rows;
   }
 
   static async getBrowsers(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
 
-    const { fromDate, toDate } = this.parseDates(filter);
-    const cacheKey = `browsers:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const cacheKey = `browsers:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
@@ -760,15 +775,15 @@ export class AnalyticsService {
       LIMIT ${filter.limit};
     `);
 
-    this.setInCache(cacheKey, browsers.rows, 10000);
+    this.setInCache(cacheKey, browsers.rows, 30000); // 30 seconds TTL
     return browsers.rows;
   }
 
   static async getOperatingSystems(userId: string | undefined, filter: AnalyticsFilterInput) {
     await this.verifyAccess(filter.websiteId, userId);
 
-    const { fromDate, toDate } = this.parseDates(filter);
-    const cacheKey = `os:${filter.websiteId}:${fromDate.toISOString()}:${toDate.toISOString()}:${filter.limit}`;
+    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const cacheKey = `os:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
@@ -786,7 +801,7 @@ export class AnalyticsService {
       LIMIT ${filter.limit};
     `);
 
-    this.setInCache(cacheKey, os.rows, 10000);
+    this.setInCache(cacheKey, os.rows, 30000); // 30 seconds TTL
     return os.rows;
   }
 }
