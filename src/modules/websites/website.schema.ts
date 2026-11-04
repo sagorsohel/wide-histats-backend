@@ -12,6 +12,8 @@ export const createWebsiteSchema = z.object({
         .toLowerCase()
     ),
   isPublic: z.boolean().optional().default(false),
+  timezone: z.string().optional().default("Asia/Dhaka"),
+  country: z.string().optional().default("Bangladesh"),
 });
 
 export const updateWebsiteSchema = z.object({
@@ -27,6 +29,8 @@ export const updateWebsiteSchema = z.object({
     .optional(),
   isPublic: z.boolean().optional(),
   status: z.enum(["active", "paused"]).optional(),
+  timezone: z.string().optional(),
+  country: z.string().optional(),
 });
 
 export const websiteIdParamSchema = z.object({

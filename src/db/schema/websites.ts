@@ -11,6 +11,8 @@ export const websites = pgTable(
     trackingId: text("tracking_id").notNull().unique(),
     status: text("status").default("active").notNull(),
     isPublic: boolean("is_public").default(false).notNull(),
+    timezone: text("timezone").default("Asia/Dhaka").notNull(),
+    country: text("country").default("Bangladesh").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

@@ -1007,20 +1007,25 @@ export class AnalyticsService {
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
-    // Check website fallback baseline
+    // Check website fallback baseline & timezone
     const [site] = await db
-      .select({ domain: websites.domain })
+      .select({
+        domain: websites.domain,
+        timezone: websites.timezone,
+        country: websites.country,
+      })
       .from(websites)
       .where(eq(websites.id, filter.websiteId))
       .limit(1);
 
+    const targetTimezone = site?.timezone || "Asia/Dhaka";
     const cleanDomain = site?.domain ? getCleanDomain(site.domain) : "";
     const fallback = cleanDomain ? getBaselineStats(cleanDomain) : null;
 
-    // Query actual pageviews grouped by hour (0 to 23)
+    // Query actual pageviews grouped by hour in website timezone (0 to 23)
     const hourlyPvRes = await db.execute(sql`
       SELECT 
-        EXTRACT(HOUR FROM viewed_at)::int as hour,
+        EXTRACT(HOUR FROM (viewed_at AT TIME ZONE ${targetTimezone}))::int as hour,
         count(*)::int as pageviews,
         count(distinct visitor_id)::int as visitors,
         count(distinct session_id)::int as sessions
@@ -1028,27 +1033,27 @@ export class AnalyticsService {
       WHERE website_id = ${filter.websiteId}
         AND viewed_at >= ${fromDate}
         AND viewed_at <= ${toDate}
-      GROUP BY EXTRACT(HOUR FROM viewed_at)
+      GROUP BY EXTRACT(HOUR FROM (viewed_at AT TIME ZONE ${targetTimezone}))
       ORDER BY hour ASC;
     `);
 
-    // Query first time visitors per hour
+    // Query first time visitors per hour in website timezone
     const hourlyNewVisRes = await db.execute(sql`
       SELECT 
-        EXTRACT(HOUR FROM first_seen_at)::int as hour,
+        EXTRACT(HOUR FROM (first_seen_at AT TIME ZONE ${targetTimezone}))::int as hour,
         count(*)::int as new_visitors
       FROM visitors
       WHERE website_id = ${filter.websiteId}
         AND first_seen_at >= ${fromDate}
         AND first_seen_at <= ${toDate}
-      GROUP BY EXTRACT(HOUR FROM first_seen_at)
+      GROUP BY EXTRACT(HOUR FROM (first_seen_at AT TIME ZONE ${targetTimezone}))
       ORDER BY hour ASC;
     `);
 
-    // Query single-page sessions (bounces) per hour
+    // Query single-page sessions (bounces) per hour in website timezone
     const hourlyBounceRes = await db.execute(sql`
       SELECT 
-        EXTRACT(HOUR FROM pv.viewed_at)::int as hour,
+        EXTRACT(HOUR FROM (pv.viewed_at AT TIME ZONE ${targetTimezone}))::int as hour,
         count(distinct pv.session_id)::int as single_page_sessions
       FROM page_views pv
       WHERE pv.website_id = ${filter.websiteId}
@@ -1063,7 +1068,7 @@ export class AnalyticsService {
           GROUP BY session_id
           HAVING count(*) = 1
         )
-      GROUP BY EXTRACT(HOUR FROM pv.viewed_at);
+      GROUP BY EXTRACT(HOUR FROM (pv.viewed_at AT TIME ZONE ${targetTimezone}));
     `);
 
     const pvMap = new Map<number, any>();
@@ -1088,7 +1093,20 @@ export class AnalyticsService {
     const isToday =
       new Date().toDateString() === fromDate.toDateString() ||
       new Date().toDateString() === toDate.toDateString();
-    const currentHour = new Date().getHours();
+
+    // Determine current hour in the website's configured timezone
+    let currentHour = new Date().getHours();
+    try {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: targetTimezone,
+        hour: "numeric",
+        hour12: false,
+      }).formatToParts(new Date());
+      const hourPart = parts.find((p) => p.type === "hour");
+      if (hourPart) currentHour = parseInt(hourPart.value, 10);
+    } catch {
+      // fallback
+    }
 
     const diurnalWeights = [
       0.015, 0.012, 0.009, 0.007, 0.009, 0.018, // 0:00 - 5:59

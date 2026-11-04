@@ -29,6 +29,8 @@ export class WebsiteService {
         domain: input.domain,
         trackingId,
         isPublic: input.isPublic ?? false,
+        timezone: input.timezone || "Asia/Dhaka",
+        country: input.country || "Bangladesh",
       })
       .returning();
 
@@ -46,6 +48,8 @@ export class WebsiteService {
         trackingId: websites.trackingId,
         status: websites.status,
         isPublic: websites.isPublic,
+        timezone: websites.timezone,
+        country: websites.country,
         createdAt: websites.createdAt,
       })
       .from(websites)
