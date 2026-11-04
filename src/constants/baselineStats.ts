@@ -214,3 +214,50 @@ export function generateFallbackRecentHits(
 
   return hits;
 }
+
+export function generateFallbackDetailedReferrers(
+  totalPv: number,
+  totalVis: number
+) {
+  const sources = [
+    { name: "google.com", share: 0.44, ppv: 1.6 },
+    { name: "t.co", share: 0.18, ppv: 1.4 },
+    { name: "facebook.com", share: 0.12, ppv: 1.8 },
+    { name: "bing.com", share: 0.08, ppv: 1.5 },
+    { name: "reddit.com", share: 0.06, ppv: 2.1 },
+    { name: "duckduckgo.com", share: 0.04, ppv: 1.3 },
+    { name: "yahoo.com", share: 0.03, ppv: 1.4 },
+    { name: "instagram.com", share: 0.025, ppv: 1.9 },
+    { name: "youtube.com", share: 0.015, ppv: 1.7 },
+    { name: "pinterest.com", share: 0.01, ppv: 1.5 },
+  ];
+
+  const refVisitors = Math.round(totalVis * 0.9853);
+  const refPageviews = Math.round(totalPv * 0.9721);
+
+  return sources.map((s, idx) => {
+    const visitors = Math.max(1, Math.round(refVisitors * s.share));
+    const pageviews = Math.max(1, Math.round(visitors * s.ppv));
+    const newVisitors = Math.max(1, Math.round(visitors * 0.95));
+    const avgDuration = 120 + (idx * 37) % 180;
+    const mins = Math.floor(avgDuration / 60);
+    const secs = avgDuration % 60;
+    const tpp = `${mins > 0 ? `${mins}m ` : ""}${secs}s`;
+    const bounceRate = Number((28.5 + (idx * 3.7) % 20).toFixed(1));
+
+    return {
+      rank: idx + 1,
+      trend: (idx % 3 === 0 ? "up" : "down") as "up" | "down",
+      referrerUrl: s.name,
+      fullUrl: `https://${s.name}/`,
+      newVisitors,
+      visitors,
+      pageviews,
+      ppv: s.ppv,
+      avgDuration,
+      tpp,
+      bounceRate,
+    };
+  });
+}
+
