@@ -137,4 +137,16 @@ export class AnalyticsController {
       next(error);
     }
   }
+
+  static async traffic(req: Request, res: Response, next: NextFunction) {
+    try {
+      const data = await AnalyticsService.getTrafficStats(
+        req.user?.userId,
+        AnalyticsController.getFilter(req)
+      );
+      return ApiResponse.success(res, data);
+    } catch (error: any) {
+      next(error);
+    }
+  }
 }

@@ -78,4 +78,10 @@ router.get(
   AnalyticsController.operatingSystems
 );
 
+router.get(
+  "/traffic",
+  validateRequest({ query: analyticsFilterSchema }),
+  AnalyticsController.traffic
+);
+
 export default router;
