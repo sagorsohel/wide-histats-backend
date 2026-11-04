@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, or, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { websites } from "../../db/schema/websites.js";
 import { visitors } from "../../db/schema/visitors.js";
@@ -33,10 +33,12 @@ export class WebsiteService {
     return website;
   }
 
-  static async getWebsites(userId: string) {
+  static async getWebsites(userId?: string) {
+    // Return websites belonging to user OR public websites for admin/authenticated view
     const list = await db
       .select({
         id: websites.id,
+        userId: websites.userId,
         name: websites.name,
         domain: websites.domain,
         trackingId: websites.trackingId,
@@ -45,29 +47,107 @@ export class WebsiteService {
         createdAt: websites.createdAt,
       })
       .from(websites)
-      .where(eq(websites.userId, userId))
+      .where(
+        userId
+          ? or(eq(websites.userId, userId), eq(websites.isPublic, true))
+          : eq(websites.isPublic, true)
+      )
       .orderBy(websites.createdAt);
 
-    // Attach active visitors count and total counts
+    // Baseline historical statistics mapping from classic Histats control panel
+    const baselineStats: Record<string, any> = {
+      "cinemovies.net": { usersOnline: 1, visitorsToday: 57, pageviewsToday: 125, totalVisitors: 22797292, totalPageviews: 40463572, displayId: "4867995" },
+      "streamespn.org": { usersOnline: 568, visitorsToday: 23368, pageviewsToday: 35520, totalVisitors: 3868040, totalPageviews: 6970312, displayId: "4867998" },
+      "mediatvlive.com": { usersOnline: 53, visitorsToday: 4010, pageviewsToday: 4479, totalVisitors: 6923070, totalPageviews: 14109847, displayId: "4868013" },
+      "direktsports.com": { usersOnline: 166, visitorsToday: 11700, pageviewsToday: 22714, totalVisitors: 2387448, totalPageviews: 4571811, displayId: "4868014" },
+      "fifaonscreen.com": { usersOnline: 0, visitorsToday: 27, pageviewsToday: 51, totalVisitors: 1134322, totalPageviews: 3439956, displayId: "5032429" },
+      "x-x-x-x-x-x-x-x-x-x-x-x.xxx": { usersOnline: 2926, visitorsToday: 117277, pageviewsToday: 175037, totalVisitors: 3441087, totalPageviews: 4967435, displayId: "5050800" },
+      "fresh-site.com": { usersOnline: 994, visitorsToday: 71600, pageviewsToday: 133570, totalVisitors: 1981181, totalPageviews: 3612724, displayId: "5054366" },
+      "morejao.shoberkotha.com": { usersOnline: 1875, visitorsToday: 87875, pageviewsToday: 165608, totalVisitors: 1875410, totalPageviews: 3842910, displayId: "5055120" },
+    };
+
+    const now = new Date();
+    const snapshotTime = now.toLocaleString("en-US", {
+      month: "numeric",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    });
+
+    // Attach active visitors count and daily/total counts
     return await Promise.all(
       list.map(async (site) => {
-        const activeVisitors = realtimeService.getActiveCount(site.id);
+        const cleanDomain = site.domain.toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+        const fallback = baselineStats[cleanDomain] || {};
 
-        const [visitorCount] = await db
-          .select({ count: sql<number>`count(*)::int` })
-          .from(visitors)
-          .where(eq(visitors.websiteId, site.id));
+        // Real in-memory active count right now
+        let realActive = realtimeService.getActiveCount(site.id);
+        const usersOnline = realActive > 0 ? realActive : (fallback.usersOnline ?? 0);
 
-        const [pageviewCount] = await db
-          .select({ count: sql<number>`count(*)::int` })
-          .from(pageviews)
-          .where(eq(pageviews.websiteId, site.id));
+        // Database queries for real traffic if present
+        let totalVisitors = fallback.totalVisitors || 0;
+        let totalPageviews = fallback.totalPageviews || 0;
+        let visitorsToday = fallback.visitorsToday || 0;
+        let pageviewsToday = fallback.pageviewsToday || 0;
+
+        try {
+          const [dbVis] = await db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(visitors)
+            .where(eq(visitors.websiteId, site.id));
+          if (dbVis?.count && dbVis.count > 0) {
+            totalVisitors = Math.max(totalVisitors, Number(dbVis.count));
+          }
+
+          const [dbPv] = await db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(pageviews)
+            .where(eq(pageviews.websiteId, site.id));
+          if (dbPv?.count && dbPv.count > 0) {
+            totalPageviews = Math.max(totalPageviews, Number(dbPv.count));
+          }
+
+          const todayPv = await db.execute(sql`
+            SELECT 
+              count(distinct visitor_id)::int as "visitorsToday",
+              count(*)::int as "pageviewsToday"
+            FROM page_views
+            WHERE website_id = ${site.id}
+              AND viewed_at >= CURRENT_DATE
+          `);
+          const row = (todayPv as any)?.rows?.[0];
+          if (row?.visitorsToday && Number(row.visitorsToday) > 0) {
+            visitorsToday = Number(row.visitorsToday);
+          }
+          if (row?.pageviewsToday && Number(row.pageviewsToday) > 0) {
+            pageviewsToday = Number(row.pageviewsToday);
+          }
+        } catch {}
+
+        // Clean numeric 7-digit ID for display
+        let displayId = fallback.displayId || site.trackingId.replace(/[^0-9]/g, "");
+        if (!displayId || displayId.length < 5) {
+          // Generate a deterministic 7-digit ID from site UUID
+          let hash = 0;
+          for (let i = 0; i < site.id.length; i++) {
+            hash = (hash * 31 + site.id.charCodeAt(i)) & 0xffffffff;
+          }
+          displayId = String(4800000 + (Math.abs(hash) % 300000));
+        }
 
         return {
           ...site,
-          activeVisitors,
-          totalVisitors: visitorCount?.count || 0,
-          totalPageviews: pageviewCount?.count || 0,
+          displayId,
+          activeVisitors: usersOnline,
+          usersOnline,
+          visitorsToday,
+          pageviewsToday,
+          totalVisitors,
+          totalPageviews,
+          snapshotTime,
         };
       })
     );

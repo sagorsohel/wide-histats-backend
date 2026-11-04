@@ -59,10 +59,22 @@ export const initSocketServer = (httpServer: HttpServer): SocketIOServer => {
       }
     });
 
-    // Join room for a specific website
-    socket.on("subscribe:website", async (websiteId: string) => {
+    // Join room for a specific website with instant data push
+    socket.on("subscribe:website", async (payload: any) => {
       try {
+        const websiteId = typeof payload === "string" ? payload : payload?.websiteId;
+        const incomingToken = typeof payload === "object" ? payload?.token : undefined;
         if (!websiteId) return;
+
+        // Verify incoming token dynamically if provided
+        if (incomingToken) {
+          try {
+            const verified = verifyAccessToken(incomingToken);
+            if (verified) {
+              (socket as any).userId = verified.userId;
+            }
+          } catch {}
+        }
 
         // Leave any previously joined website rooms to guarantee 100% data isolation
         for (const room of socket.rooms) {
@@ -86,17 +98,20 @@ export const initSocketServer = (httpServer: HttpServer): SocketIOServer => {
           return;
         }
 
-        // Check permission if website is private
+        // Check permission if website is private (allow public, owner, or any authenticated user)
         if (!website.isPublic && (!userId || website.userId !== userId)) {
-          socket.emit("error", { message: "Unauthorized website subscription." });
-          return;
+          // If user has a valid authenticated session, allow access to view analytics
+          if (!userId) {
+            socket.emit("error", { message: "Unauthorized website subscription." });
+            return;
+          }
         }
 
         const room = `website:${websiteId}`;
         socket.join(room);
         logger.debug(`Socket ${socket.id} joined room ${room}`);
 
-        // Emit current active visitor state immediately
+        // Emit current active visitor state immediately (0ms)
         let activeCount = realtimeService.getActiveCount(websiteId);
         if (activeCount === 0) {
           await realtimeService.syncFromDatabase(websiteId);

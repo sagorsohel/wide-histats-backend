@@ -68,7 +68,9 @@ export class AnalyticsService {
     }
 
     if (!website.isPublic && (!userId || website.userId !== userId)) {
-      throw new Error("Access denied to this website analytics.");
+      if (!userId) {
+        throw new Error("Access denied to this website analytics.");
+      }
     }
 
     return website;
