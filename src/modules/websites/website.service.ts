@@ -9,6 +9,8 @@ import { env } from "../../config/env.js";
 import { realtimeService } from "../../services/realtime.service.js";
 import { TrackingService } from "../tracking/tracking.service.js";
 
+import { baselineStats, getBaselineStats, getCleanDomain } from "../../constants/baselineStats.js";
+
 export class WebsiteService {
   private static generateTrackingId(): string {
     const randomHex = crypto.randomBytes(8).toString("hex");
@@ -54,18 +56,6 @@ export class WebsiteService {
       )
       .orderBy(websites.createdAt);
 
-    // Baseline historical statistics mapping from classic Histats control panel
-    const baselineStats: Record<string, any> = {
-      "cinemovies.net": { usersOnline: 1, visitorsToday: 57, pageviewsToday: 125, totalVisitors: 22797292, totalPageviews: 40463572, displayId: "4867995" },
-      "streamespn.org": { usersOnline: 568, visitorsToday: 23368, pageviewsToday: 35520, totalVisitors: 3868040, totalPageviews: 6970312, displayId: "4867998" },
-      "mediatvlive.com": { usersOnline: 53, visitorsToday: 4010, pageviewsToday: 4479, totalVisitors: 6923070, totalPageviews: 14109847, displayId: "4868013" },
-      "direktsports.com": { usersOnline: 166, visitorsToday: 11700, pageviewsToday: 22714, totalVisitors: 2387448, totalPageviews: 4571811, displayId: "4868014" },
-      "fifaonscreen.com": { usersOnline: 0, visitorsToday: 27, pageviewsToday: 51, totalVisitors: 1134322, totalPageviews: 3439956, displayId: "5032429" },
-      "x-x-x-x-x-x-x-x-x-x-x-x.xxx": { usersOnline: 2926, visitorsToday: 117277, pageviewsToday: 175037, totalVisitors: 3441087, totalPageviews: 4967435, displayId: "5050800" },
-      "fresh-site.com": { usersOnline: 994, visitorsToday: 71600, pageviewsToday: 133570, totalVisitors: 1981181, totalPageviews: 3612724, displayId: "5054366" },
-      "morejao.shoberkotha.com": { usersOnline: 1875, visitorsToday: 87875, pageviewsToday: 165608, totalVisitors: 1875410, totalPageviews: 3842910, displayId: "5055120" },
-    };
-
     const now = new Date();
     const snapshotTime = now.toLocaleString("en-US", {
       month: "numeric",
@@ -80,8 +70,7 @@ export class WebsiteService {
     // Attach active visitors count and daily/total counts
     return await Promise.all(
       list.map(async (site) => {
-        const cleanDomain = site.domain.toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "");
-        const fallback = baselineStats[cleanDomain] || {};
+        const fallback = getBaselineStats(site.domain);
 
         // Real in-memory active count right now
         let realActive = realtimeService.getActiveCount(site.id);
