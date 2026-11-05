@@ -1033,7 +1033,7 @@ export class AnalyticsService {
       WHERE website_id = ${filter.websiteId}
         AND viewed_at >= ${fromDate}
         AND viewed_at <= ${toDate}
-      GROUP BY EXTRACT(HOUR FROM (viewed_at AT TIME ZONE ${targetTimezone}))
+      GROUP BY 1
       ORDER BY hour ASC;
     `);
 
@@ -1046,7 +1046,7 @@ export class AnalyticsService {
       WHERE website_id = ${filter.websiteId}
         AND first_seen_at >= ${fromDate}
         AND first_seen_at <= ${toDate}
-      GROUP BY EXTRACT(HOUR FROM (first_seen_at AT TIME ZONE ${targetTimezone}))
+      GROUP BY 1
       ORDER BY hour ASC;
     `);
 
@@ -1068,7 +1068,7 @@ export class AnalyticsService {
           GROUP BY session_id
           HAVING count(*) = 1
         )
-      GROUP BY EXTRACT(HOUR FROM (pv.viewed_at AT TIME ZONE ${targetTimezone}));
+      GROUP BY 1;
     `);
 
     const pvMap = new Map<number, any>();
