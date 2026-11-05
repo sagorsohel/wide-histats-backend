@@ -696,25 +696,24 @@ export class AnalyticsService {
         const total = fallback.visitorsToday || 12000;
         if (countryRows.length === 0) {
           countryRows = [
-            { country: "United States", country_code: "US", visitors: Math.round(total * 0.35), pageviews: Math.round(total * 0.58) },
-            { country: "United Kingdom", country_code: "GB", visitors: Math.round(total * 0.20), pageviews: Math.round(total * 0.33) },
-            { country: "Germany", country_code: "DE", visitors: Math.round(total * 0.14), pageviews: Math.round(total * 0.22) },
-            { country: "Turkey", country_code: "TR", visitors: Math.round(total * 0.11), pageviews: Math.round(total * 0.18) },
-            { country: "Uzbekistan", country_code: "UZ", visitors: Math.round(total * 0.08), pageviews: Math.round(total * 0.13) },
-            { country: "Bangladesh", country_code: "BD", visitors: Math.round(total * 0.07), pageviews: Math.round(total * 0.11) },
-            { country: "Canada", country_code: "CA", visitors: Math.round(total * 0.05), pageviews: Math.round(total * 0.08) },
+            { country: "Türkiye", country_code: "TR", visitors: 4892, pageviews: 8120 },
+            { country: "Uzbekistan", country_code: "UZ", visitors: 2650, pageviews: 4320 },
+            { country: "Tajikistan", country_code: "TJ", visitors: 1240, pageviews: 1980 },
+            { country: "Kyrgyzstan", country_code: "KG", visitors: 1150, pageviews: 1840 },
+            { country: "Hungary", country_code: "HU", visitors: 940, pageviews: 1520 },
+            { country: "Germany", country_code: "DE", visitors: 820, pageviews: 1310 },
+            { country: "United States", country_code: "US", visitors: 710, pageviews: 1140 },
           ];
         }
         if (cityRows.length === 0) {
           cityRows = [
-            { city: "Istanbul", country: "Turkey", country_code: "TR", visitors: Math.round(total * 0.18) },
-            { city: "Tashkent", country: "Uzbekistan", country_code: "UZ", visitors: Math.round(total * 0.15) },
-            { city: "Berlin", country: "Germany", country_code: "DE", visitors: Math.round(total * 0.14) },
-            { city: "Dhaka", country: "Bangladesh", country_code: "BD", visitors: Math.round(total * 0.12) },
-            { city: "London", country: "United Kingdom", country_code: "GB", visitors: Math.round(total * 0.11) },
-            { city: "New York", country: "United States", country_code: "US", visitors: Math.round(total * 0.09) },
-            { city: "Toronto", country: "Canada", country_code: "CA", visitors: Math.round(total * 0.06) },
-            { city: "Paris", country: "France", country_code: "FR", visitors: Math.round(total * 0.05) },
+            { city: "Istanbul", country: "Türkiye", country_code: "TR", visitors: 1884 },
+            { city: "Tashkent", country: "Uzbekistan", country_code: "UZ", visitors: 1035 },
+            { city: "Ankara", country: "Türkiye", country_code: "TR", visitors: 495 },
+            { city: "Dushanbe", country: "Tajikistan", country_code: "TJ", visitors: 484 },
+            { city: "Bishkek", country: "Kyrgyzstan", country_code: "KG", visitors: 446 },
+            { city: "Izmir", country: "Türkiye", country_code: "TR", visitors: 420 },
+            { city: "Budapest", country: "Hungary", country_code: "HU", visitors: 362 },
           ];
         }
       }
