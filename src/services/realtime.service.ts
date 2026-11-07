@@ -38,7 +38,7 @@ class RealtimeService {
   // Map of websiteId -> Map of visitorKey -> ActiveVisitor
   private websitesMap = new Map<string, Map<string, ActiveVisitor>>();
   // Histats standard active online window: 12 minutes (matches Histats.com ~1000 live count)
-  public readonly DEFAULT_ONLINE_WINDOW_MS = 12 * 60 * 1000;
+  public readonly DEFAULT_ONLINE_WINDOW_MS = 8 * 60 * 1000;
   private isSyncing = false;
   private listeners: ((websiteId: string) => void)[] = [];
 
@@ -106,7 +106,7 @@ class RealtimeService {
             ORDER BY viewed_at DESC 
             LIMIT 1
           ) pv ON true
-          WHERE s.last_seen_at >= now() - interval '12 minutes'
+          WHERE s.last_seen_at >= now() - interval '8 minutes'
             AND s.website_id = ${websiteId}
           ORDER BY s.visitor_id, s.last_seen_at DESC
         `
@@ -138,7 +138,7 @@ class RealtimeService {
             ORDER BY viewed_at DESC 
             LIMIT 1
           ) pv ON true
-          WHERE s.last_seen_at >= now() - interval '12 minutes'
+          WHERE s.last_seen_at >= now() - interval '8 minutes'
           ORDER BY s.website_id, s.visitor_id, s.last_seen_at DESC
         `;
 

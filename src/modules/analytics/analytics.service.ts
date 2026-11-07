@@ -407,7 +407,7 @@ export class AnalyticsService {
         LEFT JOIN page_views pv ON pv.session_id = s.id 
           AND pv.page_path = coalesce(s.exit_page, s.landing_page, '/')
         WHERE s.website_id = ${websiteId}
-          AND s.last_seen_at >= now() - interval '12 minutes'
+          AND s.last_seen_at >= now() - interval '8 minutes'
         GROUP BY coalesce(s.exit_page, s.landing_page, '/')
         ORDER BY count DESC
         LIMIT 15;
@@ -416,7 +416,7 @@ export class AnalyticsService {
         SELECT count(distinct coalesce(s.exit_page, s.landing_page, '/'))::int as "browsingPagesCount"
         FROM sessions s
         WHERE s.website_id = ${websiteId}
-          AND s.last_seen_at >= now() - interval '12 minutes';
+          AND s.last_seen_at >= now() - interval '8 minutes';
       `),
       db.execute(sql`
         SELECT 
@@ -448,7 +448,7 @@ export class AnalyticsService {
           count(distinct s.visitor_id)::int as count
         FROM sessions s
         WHERE s.website_id = ${websiteId}
-          AND s.last_seen_at >= now() - interval '12 minutes'
+          AND s.last_seen_at >= now() - interval '8 minutes'
         GROUP BY coalesce(nullif(trim(s.referrer), ''), s.source, 'direct')
         ORDER BY count DESC
         LIMIT 10;
