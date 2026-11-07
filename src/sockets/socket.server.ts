@@ -99,15 +99,7 @@ export const initSocketServer = (httpServer: HttpServer): SocketIOServer => {
           return;
         }
 
-        // Check permission if website is private (allow public, owner, or any authenticated user)
-        if (!website.isPublic && (!userId || website.userId !== userId)) {
-          // If user has a valid authenticated session, allow access to view analytics
-          if (!userId) {
-            socket.emit("error", { message: "Unauthorized website subscription." });
-            return;
-          }
-        }
-
+        // Histats behavior: Anyone viewing the live realtime stats for a valid website can subscribe to the room
         const room = `website:${websiteId}`;
         socket.join(room);
         logger.debug(`Socket ${socket.id} joined room ${room}`);
