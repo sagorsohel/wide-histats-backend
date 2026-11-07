@@ -596,11 +596,18 @@ export class AnalyticsService {
     const durationHours = durationMs / (1000 * 60 * 60);
     const isSingleDay = durationHours <= 36;
 
+    const [site] = await db
+      .select({ domain: websites.domain, timezone: websites.timezone })
+      .from(websites)
+      .where(eq(websites.id, filter.websiteId))
+      .limit(1);
+    const targetTimezone = site?.timezone || "Asia/Dhaka";
+
     if (isSingleDay) {
-      // 1. Single day (Today, Yesterday, or 1-day range): Return 24-hour distribution (00:00 to 23:00)
+      // 1. Single day (Today, Yesterday, or 1-day range): Return 24-hour distribution (00:00 to 23:00) in site timezone
       const hourlyResult = await db.execute(sql`
         SELECT 
-          to_char(viewed_at, 'HH24:00') as date,
+          to_char(viewed_at AT TIME ZONE ${targetTimezone}, 'HH24:00') as date,
           count(*)::int as pageviews,
           count(distinct visitor_id)::int as visitors,
           count(distinct session_id)::int as sessions
@@ -608,7 +615,7 @@ export class AnalyticsService {
         WHERE website_id = ${filter.websiteId}
           AND viewed_at >= ${fromDate}
           AND viewed_at <= ${toDate}
-        GROUP BY to_char(viewed_at, 'HH24:00')
+        GROUP BY to_char(viewed_at AT TIME ZONE ${targetTimezone}, 'HH24:00')
         ORDER BY date ASC;
       `);
 
@@ -1370,9 +1377,16 @@ export class AnalyticsService {
       bounceMap.set(Number(r.hour), Number(r.single_page_sessions || 0));
     }
 
-    const isToday =
-      new Date().toDateString() === fromDate.toDateString() ||
-      new Date().toDateString() === toDate.toDateString();
+    const dayFormatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: targetTimezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const todayStr = dayFormatter.format(new Date());
+    const fromStr = dayFormatter.format(fromDate);
+    const toStr = dayFormatter.format(toDate);
+    const isToday = todayStr === fromStr || todayStr === toStr;
 
     // Determine current hour in the website's configured timezone
     let currentHour = new Date().getHours();
@@ -1517,9 +1531,16 @@ export class AnalyticsService {
         : 68.5;
 
     const targetDate = fromDate;
-    const day = targetDate.getDate();
-    const month = targetDate.toLocaleString("en-US", { month: "long" });
-    const year = targetDate.getFullYear();
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: targetTimezone,
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+    const parts = formatter.formatToParts(targetDate);
+    const day = parts.find((p) => p.type === "day")?.value || String(targetDate.getDate());
+    const month = parts.find((p) => p.type === "month")?.value || "November";
+    const year = parts.find((p) => p.type === "year")?.value || String(targetDate.getFullYear());
     const dateFormatted = `${day} ${month}`;
     const dateFull = `${day} ${month} ${year}`;
 
