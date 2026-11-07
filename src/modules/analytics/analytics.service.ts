@@ -1364,54 +1364,52 @@ export class AnalyticsService {
     const cleanDomain = site?.domain ? getCleanDomain(site.domain) : "";
     const fallback = cleanDomain ? getBaselineStats(cleanDomain) : null;
 
-    // Query actual pageviews grouped by hour in website timezone (0 to 23)
-    const hourlyPvRes = await db.execute(sql`
-      SELECT 
-        EXTRACT(HOUR FROM (viewed_at AT TIME ZONE ${targetTimezone}))::int as hour,
-        count(*)::int as pageviews,
-        count(distinct visitor_id)::int as visitors,
-        count(distinct session_id)::int as sessions
-      FROM page_views
-      WHERE website_id = ${filter.websiteId}
-        AND viewed_at >= ${fromDate}
-        AND viewed_at <= ${toDate}
-      GROUP BY 1
-      ORDER BY hour ASC;
-    `);
-
-    // Query first time visitors per hour in website timezone
-    const hourlyNewVisRes = await db.execute(sql`
-      SELECT 
-        EXTRACT(HOUR FROM (first_seen_at AT TIME ZONE ${targetTimezone}))::int as hour,
-        count(*)::int as new_visitors
-      FROM visitors
-      WHERE website_id = ${filter.websiteId}
-        AND first_seen_at >= ${fromDate}
-        AND first_seen_at <= ${toDate}
-      GROUP BY 1
-      ORDER BY hour ASC;
-    `);
-
-    // Query single-page sessions (bounces) per hour in website timezone
-    const hourlyBounceRes = await db.execute(sql`
-      SELECT 
-        EXTRACT(HOUR FROM (pv.viewed_at AT TIME ZONE ${targetTimezone}))::int as hour,
-        count(distinct pv.session_id)::int as single_page_sessions
-      FROM page_views pv
-      WHERE pv.website_id = ${filter.websiteId}
-        AND pv.viewed_at >= ${fromDate}
-        AND pv.viewed_at <= ${toDate}
-        AND pv.session_id IN (
-          SELECT session_id
+    // High-performance parallel execution with optimized CTE for bounce sessions
+    const [hourlyPvRes, hourlyNewVisRes, hourlyBounceRes] = await Promise.all([
+      db.execute(sql`
+        SELECT 
+          EXTRACT(HOUR FROM (viewed_at AT TIME ZONE ${targetTimezone}))::int as hour,
+          count(*)::int as pageviews,
+          count(distinct visitor_id)::int as visitors,
+          count(distinct session_id)::int as sessions
+        FROM page_views
+        WHERE website_id = ${filter.websiteId}
+          AND viewed_at >= ${fromDate}
+          AND viewed_at <= ${toDate}
+        GROUP BY 1
+        ORDER BY hour ASC;
+      `),
+      db.execute(sql`
+        SELECT 
+          EXTRACT(HOUR FROM (first_seen_at AT TIME ZONE ${targetTimezone}))::int as hour,
+          count(*)::int as new_visitors
+        FROM visitors
+        WHERE website_id = ${filter.websiteId}
+          AND first_seen_at >= ${fromDate}
+          AND first_seen_at <= ${toDate}
+        GROUP BY 1
+        ORDER BY hour ASC;
+      `),
+      db.execute(sql`
+        WITH session_summary AS (
+          SELECT 
+            session_id,
+            min(viewed_at) as session_start,
+            count(*) as pv_count
           FROM page_views
           WHERE website_id = ${filter.websiteId}
             AND viewed_at >= ${fromDate}
             AND viewed_at <= ${toDate}
           GROUP BY session_id
-          HAVING count(*) = 1
         )
-      GROUP BY 1;
-    `);
+        SELECT 
+          EXTRACT(HOUR FROM (session_start AT TIME ZONE ${targetTimezone}))::int as hour,
+          count(*)::int as single_page_sessions
+        FROM session_summary
+        WHERE pv_count = 1
+        GROUP BY 1;
+      `),
+    ]);
 
     const pvMap = new Map<number, any>();
     let totalPvs = 0;
