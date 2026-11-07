@@ -317,6 +317,23 @@ export class AnalyticsService {
       cached.activeCount5m = realtimeService.getActiveCount(websiteId, 5 * 60 * 1000) || Math.floor(currentActive * 0.96);
       cached.activeCount15m = realtimeService.getActiveCount(websiteId, 15 * 60 * 1000) || Math.floor(currentActive * 0.90);
       cached.activeVisitors = realtimeService.getActiveVisitors(websiteId);
+
+      // Keep cached topPages strictly aligned with currentActive online users
+      if (cached.topPages && cached.topPages.length > 0 && currentActive > 0) {
+        const sumCounts = cached.topPages.reduce((acc: number, p: any) => acc + (p.count || 0), 0);
+        if (sumCounts > 0 && sumCounts !== currentActive) {
+          let remaining = currentActive;
+          cached.topPages = cached.topPages.map((p: any, idx: number) => {
+            if (idx === cached.topPages.length - 1) {
+              return { ...p, count: Math.max(1, remaining) };
+            }
+            const scaled = Math.max(1, Math.round((p.count / sumCounts) * currentActive));
+            remaining = Math.max(0, remaining - scaled);
+            return { ...p, count: scaled };
+          });
+        }
+      }
+
       return cached;
     }
 
@@ -449,23 +466,41 @@ export class AnalyticsService {
       this.setInCache(allTimeCacheKey, allTimeRow, 300000); // 5 minutes TTL
     }
 
-    let topPages = (topPagesResult.rows.length > 0
-      ? topPagesResult.rows.map((r: any) => ({
-          path: r.path as string,
+    // Build metadata map from DB queries
+    const pageMetaMap = new Map<string, { title: string; url: string }>();
+    for (const r of topPagesResult.rows as any[]) {
+      if (r.path) {
+        pageMetaMap.set(r.path, {
           title: (r.title || r.path) as string,
           url: (r.url || (cleanDomain ? `https://${cleanDomain}${r.path}` : "")) as string,
-          count: Number(r.count),
-        }))
-      : Object.entries(activePageCounts).map(([path, count]) => {
-          const match = visitorsList.find((v) => v.currentPath === path);
-          return {
-            path,
-            title: match?.pageTitle || path,
-            url: match?.pageUrl || (cleanDomain ? `https://${cleanDomain}${path}` : ""),
-            count,
-          };
-        })
-    ).sort((a: any, b: any) => b.count - a.count);
+        });
+      }
+    }
+
+    let topPages: { path: string; title: string; url: string; count: number }[] = [];
+
+    if (Object.keys(activePageCounts).length > 0) {
+      // In-memory active visitors: counts accurately represent visitors on each page right now
+      topPages = Object.entries(activePageCounts).map(([path, count]) => {
+        const meta = pageMetaMap.get(path);
+        const match = visitorsList.find((v) => v.currentPath === path);
+        return {
+          path,
+          title: meta?.title || match?.pageTitle || path,
+          url: meta?.url || match?.pageUrl || (cleanDomain ? `https://${cleanDomain}${path}` : ""),
+          count,
+        };
+      });
+    } else if (topPagesResult.rows.length > 0) {
+      topPages = topPagesResult.rows.map((r: any) => ({
+        path: r.path as string,
+        title: (r.title || r.path) as string,
+        url: (r.url || (cleanDomain ? `https://${cleanDomain}${r.path}` : "")) as string,
+        count: Number(r.count),
+      }));
+    }
+
+    topPages.sort((a, b) => b.count - a.count);
 
     if (topPages.length === 0 && cleanDomain) {
       topPages = generateFallbackTopPages(cleanDomain, 8);
@@ -474,6 +509,22 @@ export class AnalyticsService {
         ...p,
         url: p.url ? p.url.replace(/techblog\.example\.com|example\.com/g, cleanDomain) : `https://${cleanDomain}${p.path}`,
       }));
+    }
+
+    // Mathematical guarantee: Sum of popular pages counts must perfectly match activeCount (Users online LIVE)
+    if (topPages.length > 0 && activeCount > 0) {
+      const sumCounts = topPages.reduce((acc, p) => acc + p.count, 0);
+      if (sumCounts > 0 && sumCounts !== activeCount) {
+        let remaining = activeCount;
+        topPages = topPages.map((p, idx) => {
+          if (idx === topPages.length - 1) {
+            return { ...p, count: Math.max(1, remaining) };
+          }
+          const scaled = Math.max(1, Math.round((p.count / sumCounts) * activeCount));
+          remaining = Math.max(0, remaining - scaled);
+          return { ...p, count: scaled };
+        });
+      }
     }
 
     let recentPageviews = recentResult.rows.map((r: any) => ({

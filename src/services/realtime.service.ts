@@ -38,7 +38,7 @@ class RealtimeService {
   // Map of websiteId -> Map of visitorKey -> ActiveVisitor
   private websitesMap = new Map<string, Map<string, ActiveVisitor>>();
   // Histats standard active online window: 12 minutes (matches Histats.com ~1000 live count)
-  public readonly DEFAULT_ONLINE_WINDOW_MS = 9 * 60 * 1000;
+  public readonly DEFAULT_ONLINE_WINDOW_MS = 12 * 60 * 1000;
   private isSyncing = false;
   private listeners: ((websiteId: string) => void)[] = [];
 
@@ -84,6 +84,8 @@ class RealtimeService {
             v.visitor_key as "visitorKey",
             s.session_key as "sessionKey",
             coalesce(s.exit_page, s.landing_page, '/') as "currentPath",
+            coalesce(nullif(pv.page_title, ''), coalesce(s.exit_page, s.landing_page, '/')) as "pageTitle",
+            coalesce(pv.page_url, '') as "pageUrl",
             coalesce(vl.country, 'Unknown') as country,
             coalesce(vl.country_code, 'XX') as "countryCode",
             vl.city,
@@ -97,6 +99,13 @@ class RealtimeService {
           FROM sessions s
           JOIN visitors v ON v.id = s.visitor_id
           LEFT JOIN visitor_locations vl ON vl.visitor_id = v.id
+          LEFT JOIN LATERAL (
+            SELECT page_title, page_url 
+            FROM page_views 
+            WHERE session_id = s.id 
+            ORDER BY viewed_at DESC 
+            LIMIT 1
+          ) pv ON true
           WHERE s.last_seen_at >= now() - interval '12 minutes'
             AND s.website_id = ${websiteId}
           ORDER BY s.visitor_id, s.last_seen_at DESC
@@ -107,6 +116,8 @@ class RealtimeService {
             v.visitor_key as "visitorKey",
             s.session_key as "sessionKey",
             coalesce(s.exit_page, s.landing_page, '/') as "currentPath",
+            coalesce(nullif(pv.page_title, ''), coalesce(s.exit_page, s.landing_page, '/')) as "pageTitle",
+            coalesce(pv.page_url, '') as "pageUrl",
             coalesce(vl.country, 'Unknown') as country,
             coalesce(vl.country_code, 'XX') as "countryCode",
             vl.city,
@@ -120,6 +131,13 @@ class RealtimeService {
           FROM sessions s
           JOIN visitors v ON v.id = s.visitor_id
           LEFT JOIN visitor_locations vl ON vl.visitor_id = v.id
+          LEFT JOIN LATERAL (
+            SELECT page_title, page_url 
+            FROM page_views 
+            WHERE session_id = s.id 
+            ORDER BY viewed_at DESC 
+            LIMIT 1
+          ) pv ON true
           WHERE s.last_seen_at >= now() - interval '12 minutes'
           ORDER BY s.website_id, s.visitor_id, s.last_seen_at DESC
         `;
@@ -143,6 +161,8 @@ class RealtimeService {
             visitorKey: row.visitorKey,
             sessionKey: row.sessionKey,
             currentPath: row.currentPath,
+            pageTitle: row.pageTitle || existing?.pageTitle || undefined,
+            pageUrl: row.pageUrl || existing?.pageUrl || undefined,
             country: row.country,
             countryCode: row.countryCode,
             city: row.city || undefined,
