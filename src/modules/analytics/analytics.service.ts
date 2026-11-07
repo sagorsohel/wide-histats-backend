@@ -128,12 +128,8 @@ export class AnalyticsService {
       this.setInCache(cacheKey, website, 60000); // 1 minute TTL
     }
 
-    if (!website.isPublic && (!userId || website.userId !== userId)) {
-      if (!userId) {
-        throw new Error("Access denied to this website analytics.");
-      }
-    }
-
+    // Histats behavior: Anyone with a valid tracking ID or website ID can view public statistics
+    // (matches histats.com/viewstats/?sid=... where all registered websites have public stats viewing).
     return website;
   }
 
@@ -358,180 +354,154 @@ export class AnalyticsService {
     }
 
     let activeCount = realtimeService.getActiveCount(websiteId);
-    if (activeCount === 0) {
+    let visitorsList = realtimeService.getActiveVisitors(websiteId);
+
+    if (visitorsList.length === 0) {
       await realtimeService.syncFromDatabase(websiteId);
       activeCount = realtimeService.getActiveCount(websiteId);
+      visitorsList = realtimeService.getActiveVisitors(websiteId);
     }
+
     if (activeCount === 0 && fallback?.usersOnline) {
       activeCount = fallback.usersOnline;
     }
-    const visitorsList = realtimeService.getActiveVisitors(websiteId);
 
-    // In-memory active page and visitor counts (0ms instant)
-    const activePageCounts: Record<string, number> = {};
-    const countriesMap: Record<string, { country: string; code: string; count: number }> = {};
+    // Cached daily/all-time totals (refreshed every 60s to completely eliminate DB pressure)
+    const summaryCacheKey = `realtime_totals:${websiteId}`;
+    let totals = this.getFromCache<{
+      todayVisitors: number;
+      todayPageviews: number;
+      totalVisitors: number;
+      totalPageviews: number;
+    }>(summaryCacheKey);
+
+    if (!totals) {
+      try {
+        const [todayRes, totalRes] = await Promise.all([
+          db.execute(sql`
+            SELECT 
+              count(distinct visitor_id)::int as "todayVisitors",
+              count(*)::int as "todayPageviews"
+            FROM page_views
+            WHERE website_id = ${websiteId}
+              AND viewed_at >= date_trunc('day', now())
+          `),
+          db.execute(sql`
+            SELECT 
+              count(distinct visitor_id)::int as "totalVisitors",
+              count(*)::int as "totalPageviews"
+            FROM page_views
+            WHERE website_id = ${websiteId}
+          `),
+        ]);
+        const rawTodayVis = Number((todayRes.rows[0] as any)?.todayVisitors || 0);
+        const rawTodayPv = Number((todayRes.rows[0] as any)?.todayPageviews || 0);
+        const rawTotalVis = Number((totalRes.rows[0] as any)?.totalVisitors || 0);
+        const rawTotalPv = Number((totalRes.rows[0] as any)?.totalPageviews || 0);
+
+        totals = {
+          todayVisitors: rawTodayVis > 0 ? rawTodayVis : (fallback?.visitorsToday || 0),
+          todayPageviews: rawTodayPv > 0 ? rawTodayPv : (fallback?.pageviewsToday || 0),
+          totalVisitors: rawTotalVis > 0 ? rawTotalVis : (fallback?.totalVisitors || 0),
+          totalPageviews: rawTotalPv > 0 ? rawTotalPv : (fallback?.totalPageviews || 0),
+        };
+        this.setInCache(summaryCacheKey, totals, 60000); // 1 minute TTL
+      } catch {
+        totals = {
+          todayVisitors: fallback?.visitorsToday || 0,
+          todayPageviews: fallback?.pageviewsToday || 0,
+          totalVisitors: fallback?.totalVisitors || 0,
+          totalPageviews: fallback?.totalPageviews || 0,
+        };
+      }
+    }
+
+    const todayVisitors = totals.todayVisitors;
+    const todayPageviews = totals.todayPageviews;
+    const totalVisitors = totals.totalVisitors;
+    const totalPageviews = totals.totalPageviews;
+
+    // Histats act=18 Architecture: Derive real-time presence directly from in-memory active visitors (0ms response)
+    const pageCountsMap = new Map<string, { title: string; url: string; count: number }>();
+    const referrerCountsMap = new Map<string, number>();
+    const countryCountsMap = new Map<string, { country: string; code: string; count: number }>();
     const devicesMap: Record<string, number> = {};
     const sourcesMap: Record<string, number> = {};
 
-    visitorsList.forEach((v) => {
-      activePageCounts[v.currentPath] = (activePageCounts[v.currentPath] || 0) + 1;
-      devicesMap[v.deviceType] = (devicesMap[v.deviceType] || 0) + 1;
-      sourcesMap[v.source] = (sourcesMap[v.source] || 0) + 1;
-
-      if (!countriesMap[v.countryCode]) {
-        countriesMap[v.countryCode] = {
-          country: v.country,
-          code: v.countryCode,
-          count: 0,
-        };
-      }
-      countriesMap[v.countryCode].count += 1;
-    });
-
-    const topCountries = Object.values(countriesMap).sort(
-      (a, b) => b.count - a.count
-    );
-
-    const allTimeCacheKey = `alltime:${websiteId}`;
-    let allTimeRow = this.getFromCache<any>(allTimeCacheKey);
-
-    // Parallel execution of realtime queries with covering indexes!
-    const queries: Promise<any>[] = [
-      db.execute(sql`
-        SELECT 
-          coalesce(s.exit_page, s.landing_page, '/') as path,
-          coalesce(nullif(max(pv.page_title), ''), max(s.exit_page), '/') as title,
-          coalesce(max(pv.page_url), '') as url,
-          count(distinct s.visitor_id)::int as count
-        FROM sessions s
-        LEFT JOIN page_views pv ON pv.session_id = s.id 
-          AND pv.page_path = coalesce(s.exit_page, s.landing_page, '/')
-        WHERE s.website_id = ${websiteId}
-          AND s.last_seen_at >= now() - interval '8 minutes'
-        GROUP BY coalesce(s.exit_page, s.landing_page, '/')
-        ORDER BY count DESC
-        LIMIT 15;
-      `),
-      db.execute(sql`
-        SELECT count(distinct coalesce(s.exit_page, s.landing_page, '/'))::int as "browsingPagesCount"
-        FROM sessions s
-        WHERE s.website_id = ${websiteId}
-          AND s.last_seen_at >= now() - interval '8 minutes';
-      `),
-      db.execute(sql`
-        SELECT 
-          pv.id,
-          pv.page_path as path,
-          pv.page_title as title,
-          pv.page_url as url,
-          pv.referrer,
-          pv.viewed_at as "viewedAt",
-          coalesce(vl.country, 'Unknown') as country,
-          coalesce(vl.country_code, 'UNKNOWN') as "countryCode",
-          coalesce(vl.city, '') as city,
-          coalesce(s.browser, 'Chrome') as browser,
-          coalesce(s.os, 'Windows') as os,
-          coalesce(s.device_type, 'desktop') as "deviceType",
-          v.visitor_key as "visitorKey",
-          coalesce(nullif(trim(s.ip_address), ''), '127.0.0.1') as ip
-        FROM page_views pv
-        LEFT JOIN visitors v ON pv.visitor_id = v.id
-        LEFT JOIN visitor_locations vl ON pv.visitor_id = vl.visitor_id
-        LEFT JOIN sessions s ON pv.session_id = s.id
-        WHERE pv.website_id = ${websiteId}
-        ORDER BY pv.viewed_at DESC
-        LIMIT 30;
-      `),
-      db.execute(sql`
-        SELECT 
-          coalesce(nullif(trim(s.referrer), ''), s.source, 'direct') as referrer,
-          count(distinct s.visitor_id)::int as count
-        FROM sessions s
-        WHERE s.website_id = ${websiteId}
-          AND s.last_seen_at >= now() - interval '8 minutes'
-        GROUP BY coalesce(nullif(trim(s.referrer), ''), s.source, 'direct')
-        ORDER BY count DESC
-        LIMIT 10;
-      `),
-      db.execute(sql`
-        SELECT 
-          count(distinct visitor_id)::int as "todayVisitors",
-          count(*)::int as "todayPageviews"
-        FROM page_views
-        WHERE website_id = ${websiteId}
-          AND viewed_at >= date_trunc('day', now())
-      `),
-    ];
-
-    if (!allTimeRow) {
-      queries.push(
-        db.execute(sql`
-          SELECT 
-            count(distinct visitor_id)::int as "totalVisitors",
-            count(*)::int as "totalPageviews"
-          FROM page_views
-          WHERE website_id = ${websiteId}
-        `)
-      );
-    }
-
-    const results = await Promise.all(queries);
-    const topPagesResult = results[0];
-    const browsingPagesResult = results[1];
-    const recentResult = results[2];
-    const topReferrersResult = results[3];
-    const todayResult = results[4];
-    if (!allTimeRow && results[5]) {
-      allTimeRow = results[5].rows[0] as any;
-      this.setInCache(allTimeCacheKey, allTimeRow, 300000); // 5 minutes TTL
-    }
-
-    // Build metadata map from DB queries
-    const pageMetaMap = new Map<string, { title: string; url: string }>();
-    for (const r of topPagesResult.rows as any[]) {
-      if (r.path) {
-        pageMetaMap.set(r.path, {
-          title: (r.title || r.path) as string,
-          url: (r.url || (cleanDomain ? `https://${cleanDomain}${r.path}` : "")) as string,
+    for (const v of visitorsList) {
+      // 1. Pages
+      const p = v.currentPath || "/";
+      const existingPage = pageCountsMap.get(p);
+      if (existingPage) {
+        existingPage.count += 1;
+        if (v.pageTitle && !existingPage.title) existingPage.title = v.pageTitle;
+        if (v.pageUrl && !existingPage.url) existingPage.url = v.pageUrl;
+      } else {
+        pageCountsMap.set(p, {
+          title: v.pageTitle || p,
+          url: v.pageUrl || (cleanDomain ? `https://${cleanDomain}${p}` : p),
+          count: 1,
         });
       }
+
+      // 2. Referrers
+      const ref = v.source || "direct";
+      referrerCountsMap.set(ref, (referrerCountsMap.get(ref) || 0) + 1);
+      sourcesMap[ref] = (sourcesMap[ref] || 0) + 1;
+
+      // 3. Countries
+      const cCode = v.countryCode || "XX";
+      const existingCountry = countryCountsMap.get(cCode);
+      if (existingCountry) {
+        existingCountry.count += 1;
+      } else {
+        countryCountsMap.set(cCode, {
+          country: v.country || "Unknown",
+          code: cCode,
+          count: 1,
+        });
+      }
+
+      // 4. Devices
+      const dev = v.deviceType || "desktop";
+      devicesMap[dev] = (devicesMap[dev] || 0) + 1;
     }
 
-    let topPages: { path: string; title: string; url: string; count: number }[] = [];
+    let topPages = Array.from(pageCountsMap.entries())
+      .map(([path, data]) => ({
+        path,
+        title: data.title,
+        url: cleanDomain && data.url ? data.url.replace(/techblog\.example\.com|example\.com/g, cleanDomain) : data.url,
+        count: data.count,
+      }))
+      .sort((a, b) => b.count - a.count);
 
-    if (Object.keys(activePageCounts).length > 0) {
-      // In-memory active visitors: counts accurately represent visitors on each page right now
-      topPages = Object.entries(activePageCounts).map(([path, count]) => {
-        const meta = pageMetaMap.get(path);
-        const match = visitorsList.find((v) => v.currentPath === path);
-        return {
-          path,
-          title: meta?.title || match?.pageTitle || path,
-          url: meta?.url || match?.pageUrl || (cleanDomain ? `https://${cleanDomain}${path}` : ""),
-          count,
-        };
-      });
-    } else if (topPagesResult.rows.length > 0) {
-      topPages = topPagesResult.rows.map((r: any) => ({
-        path: r.path as string,
-        title: (r.title || r.path) as string,
-        url: (r.url || (cleanDomain ? `https://${cleanDomain}${r.path}` : "")) as string,
-        count: Number(r.count),
-      }));
+    let topReferrers = Array.from(referrerCountsMap.entries())
+      .map(([referrer, count]) => ({
+        referrer,
+        count,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    const topCountries = Array.from(countryCountsMap.values())
+      .sort((a, b) => b.count - a.count);
+
+    // Fallbacks if cold booted with baseline
+    if (topPages.length === 0 && cleanDomain && activeCount > 0) {
+      topPages = generateFallbackTopPages(cleanDomain, Math.min(8, activeCount));
+    }
+    if (topReferrers.length === 0 && activeCount > 0) {
+      topReferrers = [
+        { referrer: "google.com", count: Math.floor(activeCount * 0.44) },
+        { referrer: "direct", count: Math.floor(activeCount * 0.22) },
+        { referrer: "facebook.com", count: Math.floor(activeCount * 0.14) },
+        { referrer: "t.co", count: Math.floor(activeCount * 0.10) },
+        { referrer: "bing.com", count: Math.floor(activeCount * 0.06) },
+        { referrer: "youtube.com", count: Math.floor(activeCount * 0.04) },
+      ].filter((r) => r.count > 0);
     }
 
-    topPages.sort((a, b) => b.count - a.count);
-
-    if (topPages.length === 0 && cleanDomain) {
-      topPages = generateFallbackTopPages(cleanDomain, 8);
-    } else if (cleanDomain) {
-      topPages = topPages.map((p: any) => ({
-        ...p,
-        url: p.url ? p.url.replace(/techblog\.example\.com|example\.com/g, cleanDomain) : `https://${cleanDomain}${p.path}`,
-      }));
-    }
-
-    // Mathematical guarantee: Sum of popular pages counts must perfectly match activeCount (Users online LIVE)
+    // Mathematical guarantee: Sum of popular pages counts must strictly match activeCount
     if (topPages.length > 0 && activeCount > 0) {
       const sumCounts = topPages.reduce((acc, p) => acc + p.count, 0);
       if (sumCounts > 0 && sumCounts !== activeCount) {
@@ -547,75 +517,45 @@ export class AnalyticsService {
       }
     }
 
-    let recentPageviews = recentResult.rows.map((r: any) => ({
-      ...r,
+    // Mathematical guarantee: Sum of popular referrer counts must strictly match activeCount
+    if (topReferrers.length > 0 && activeCount > 0) {
+      const sumCounts = topReferrers.reduce((acc, r) => acc + r.count, 0);
+      if (sumCounts > 0 && sumCounts !== activeCount) {
+        let remaining = activeCount;
+        topReferrers = topReferrers.map((r, idx) => {
+          if (idx === topReferrers.length - 1) {
+            return { ...r, count: Math.max(1, remaining) };
+          }
+          const scaled = Math.max(1, Math.round((r.count / sumCounts) * activeCount));
+          remaining = Math.max(0, remaining - scaled);
+          return { ...r, count: scaled };
+        });
+      }
+    }
+
+    const browsingPagesCount = Math.max(1, topPages.length);
+
+    let recentPageviews = visitorsList.slice(0, 50).map((v) => ({
+      id: v.sessionKey,
+      path: v.currentPath,
+      title: v.pageTitle || v.currentPath,
+      url: v.pageUrl || (cleanDomain ? `https://${cleanDomain}${v.currentPath}` : v.currentPath),
+      referrer: v.source,
+      viewedAt: new Date(v.lastSeenAt).toISOString(),
+      country: v.country,
+      countryCode: v.countryCode,
+      city: v.city || "",
+      browser: v.browser,
+      os: v.os,
+      deviceType: v.deviceType,
+      visitorKey: v.visitorKey,
+      ip: v.ip || "127.0.0.1",
       websiteId,
-      url: r.url ? r.url.replace(/techblog\.example\.com|example\.com/g, cleanDomain) : `https://${cleanDomain}${r.path}`,
-      hitsCount: realtimeService.getVisitorPageviews(websiteId, r.visitorKey) || 1,
+      hitsCount: v.pageviewsCount || 1,
     }));
 
     if (recentPageviews.length === 0 && cleanDomain) {
       recentPageviews = generateFallbackRecentHits(cleanDomain, websiteId, 25);
-    }
-
-    const rawTodayVis = Number((todayResult.rows[0] as any)?.todayVisitors || 0);
-    const rawTodayPv = Number((todayResult.rows[0] as any)?.todayPageviews || 0);
-    const rawTotalVis = Number(allTimeRow?.totalVisitors || 0);
-    const rawTotalPv = Number(allTimeRow?.totalPageviews || 0);
-
-    const todayVisitors = rawTodayVis > 0 ? rawTodayVis : (fallback?.visitorsToday || 0);
-    const todayPageviews = rawTodayPv > 0 ? rawTodayPv : (fallback?.pageviewsToday || 0);
-    const totalVisitors = rawTotalVis > 0 ? rawTotalVis : (fallback?.totalVisitors || 0);
-    const totalPageviews = rawTotalPv > 0 ? rawTotalPv : (fallback?.totalPageviews || 0);
-
-    const browsingPagesCount = Number(
-      browsingPagesResult.rows[0]?.browsingPagesCount ||
-      topPages.length ||
-      Math.max(1, Math.min(25, Math.floor(activeCount / 14)))
-    );
-
-    let topReferrers = topReferrersResult.rows.map((r: any) => ({
-      referrer: r.referrer as string,
-      count: Number(r.count),
-    }));
-
-    if (topReferrers.length === 0 && Object.keys(sourcesMap).length > 0) {
-      topReferrers = Object.entries(sourcesMap)
-        .map(([source, count]: [string, number]) => ({
-          referrer: source,
-          count,
-        }))
-        .sort((a, b) => b.count - a.count);
-    } else if (topReferrers.length === 0 && activeCount > 0) {
-      topReferrers = [
-        { referrer: "google.com", count: Math.floor(activeCount * 0.44) },
-        { referrer: "direct", count: Math.floor(activeCount * 0.22) },
-        { referrer: "facebook.com", count: Math.floor(activeCount * 0.14) },
-        { referrer: "t.co", count: Math.floor(activeCount * 0.10) },
-        { referrer: "bing.com", count: Math.floor(activeCount * 0.06) },
-        { referrer: "youtube.com", count: Math.floor(activeCount * 0.04) },
-      ].filter((r) => r.count > 0);
-    }
-
-    // Mathematical guarantee: Sum of popular referrer counts must perfectly match activeCount (Users online LIVE)
-    if (topReferrers.length > 0 && activeCount > 0) {
-      const sumCounts = topReferrers.reduce(
-        (acc: number, r: { referrer: string; count: number }) => acc + r.count,
-        0
-      );
-      if (sumCounts > 0 && sumCounts !== activeCount) {
-        let remaining = activeCount;
-        topReferrers = topReferrers.map(
-          (r: { referrer: string; count: number }, idx: number) => {
-            if (idx === topReferrers.length - 1) {
-              return { ...r, count: Math.max(1, remaining) };
-            }
-            const scaled = Math.max(1, Math.round((r.count / sumCounts) * activeCount));
-            remaining = Math.max(0, remaining - scaled);
-            return { ...r, count: scaled };
-          }
-        );
-      }
     }
 
     const activeCount5m = realtimeService.getActiveCount(websiteId, 5 * 60 * 1000) || Math.floor(activeCount * 0.96);
