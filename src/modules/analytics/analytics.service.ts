@@ -77,11 +77,45 @@ export class AnalyticsService {
     let website = this.getFromCache<any>(cacheKey);
 
     if (!website) {
-      const [dbWebsite] = await db
-        .select()
-        .from(websites)
-        .where(eq(websites.id, websiteId))
-        .limit(1);
+      const isUuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          websiteId
+        );
+
+      let dbWebsite: any = null;
+      if (isUuid) {
+        const [res] = await db
+          .select()
+          .from(websites)
+          .where(eq(websites.id, websiteId))
+          .limit(1);
+        dbWebsite = res;
+      } else {
+        const [res] = await db
+          .select()
+          .from(websites)
+          .where(eq(websites.trackingId, websiteId))
+          .limit(1);
+        dbWebsite = res;
+      }
+
+      if (!dbWebsite) {
+        // Fallback: match by baseline 7-digit displayId or deterministic hash
+        const allSites = await db.select().from(websites);
+        dbWebsite = allSites.find((s) => {
+          if (s.trackingId === websiteId) return true;
+          const fallback = getBaselineStats(s.domain);
+          let disp = fallback.displayId || s.trackingId.replace(/[^0-9]/g, "");
+          if (!disp || disp.length < 5) {
+            let hash = 0;
+            for (let i = 0; i < s.id.length; i++) {
+              hash = (hash * 31 + s.id.charCodeAt(i)) & 0xffffffff;
+            }
+            disp = String(4800000 + (Math.abs(hash) % 300000));
+          }
+          return disp === websiteId;
+        });
+      }
 
       if (!dbWebsite) {
         throw new Error("Website not found.");
@@ -100,7 +134,8 @@ export class AnalyticsService {
   }
 
   static async getOverview(userId: string | undefined, filter: AnalyticsFilterInput) {
-    await this.verifyAccess(filter.websiteId, userId);
+    const website = await this.verifyAccess(filter.websiteId, userId);
+    filter.websiteId = website.id;
 
     const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
 
@@ -257,7 +292,8 @@ export class AnalyticsService {
   }
 
   static async getRealtime(userId: string | undefined, websiteId: string) {
-    await this.verifyAccess(websiteId, userId);
+    const website = await this.verifyAccess(websiteId, userId);
+    websiteId = website.id;
 
     const [site] = await db
       .select({ domain: websites.domain })
@@ -498,7 +534,8 @@ export class AnalyticsService {
   }
 
   static async getTimeseries(userId: string | undefined, filter: AnalyticsFilterInput) {
-    await this.verifyAccess(filter.websiteId, userId);
+    const website = await this.verifyAccess(filter.websiteId, userId);
+    filter.websiteId = website.id;
 
     const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
     const cacheKey = `timeseries:${filter.websiteId}:${cacheFrom}:${cacheTo}`;
@@ -640,7 +677,8 @@ export class AnalyticsService {
   }
 
   static async getGeography(userId: string | undefined, filter: AnalyticsFilterInput) {
-    await this.verifyAccess(filter.websiteId, userId);
+    const website = await this.verifyAccess(filter.websiteId, userId);
+    filter.websiteId = website.id;
 
     const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
     const cacheKey = `geo:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
@@ -736,7 +774,8 @@ export class AnalyticsService {
   }
 
   static async getSources(userId: string | undefined, filter: AnalyticsFilterInput) {
-    await this.verifyAccess(filter.websiteId, userId);
+    const website = await this.verifyAccess(filter.websiteId, userId);
+    filter.websiteId = website.id;
 
     const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
     const cacheKey = `sources:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
@@ -927,7 +966,8 @@ export class AnalyticsService {
   }
 
   static async getPages(userId: string | undefined, filter: AnalyticsFilterInput) {
-    await this.verifyAccess(filter.websiteId, userId);
+    const website = await this.verifyAccess(filter.websiteId, userId);
+    filter.websiteId = website.id;
 
     const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
     const cacheKey = `pages:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
@@ -954,7 +994,8 @@ export class AnalyticsService {
   }
 
   static async getLandingPages(userId: string | undefined, filter: AnalyticsFilterInput) {
-    await this.verifyAccess(filter.websiteId, userId);
+    const website = await this.verifyAccess(filter.websiteId, userId);
+    filter.websiteId = website.id;
 
     const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
     const cacheKey = `landing:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
@@ -1001,7 +1042,8 @@ export class AnalyticsService {
   }
 
   static async getExitPages(userId: string | undefined, filter: AnalyticsFilterInput) {
-    await this.verifyAccess(filter.websiteId, userId);
+    const website = await this.verifyAccess(filter.websiteId, userId);
+    filter.websiteId = website.id;
 
     const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
     const cacheKey = `exit:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
@@ -1048,7 +1090,8 @@ export class AnalyticsService {
   }
 
   static async getDevices(userId: string | undefined, filter: AnalyticsFilterInput) {
-    await this.verifyAccess(filter.websiteId, userId);
+    const website = await this.verifyAccess(filter.websiteId, userId);
+    filter.websiteId = website.id;
 
     const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
     const cacheKey = `devices:${filter.websiteId}:${cacheFrom}:${cacheTo}`;
@@ -1092,7 +1135,8 @@ export class AnalyticsService {
   }
 
   static async getBrowsers(userId: string | undefined, filter: AnalyticsFilterInput) {
-    await this.verifyAccess(filter.websiteId, userId);
+    const website = await this.verifyAccess(filter.websiteId, userId);
+    filter.websiteId = website.id;
 
     const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
     const cacheKey = `browsers:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
@@ -1139,7 +1183,8 @@ export class AnalyticsService {
   }
 
   static async getOperatingSystems(userId: string | undefined, filter: AnalyticsFilterInput) {
-    await this.verifyAccess(filter.websiteId, userId);
+    const website = await this.verifyAccess(filter.websiteId, userId);
+    filter.websiteId = website.id;
 
     const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
     const cacheKey = `os:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
@@ -1186,7 +1231,8 @@ export class AnalyticsService {
   }
 
   static async getTrafficStats(userId: string | undefined, filter: AnalyticsFilterInput) {
-    await this.verifyAccess(filter.websiteId, userId);
+    const website = await this.verifyAccess(filter.websiteId, userId);
+    filter.websiteId = website.id;
 
     const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
     const cacheKey = `traffic_stats:${filter.websiteId}:${cacheFrom}:${cacheTo}`;

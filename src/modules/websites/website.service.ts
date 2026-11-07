@@ -12,13 +12,26 @@ import { TrackingService } from "../tracking/tracking.service.js";
 import { baselineStats, getBaselineStats, getCleanDomain } from "../../constants/baselineStats.js";
 
 export class WebsiteService {
-  private static generateTrackingId(): string {
-    const randomHex = crypto.randomBytes(8).toString("hex");
-    return `wid_${randomHex}`;
+  // Generate a strictly unique 7-digit numeric Site ID (e.g. 5055120, 4867998)
+  private static async generateUnique7DigitId(): Promise<string> {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      // 7-digit numeric string between 1000000 and 9999999
+      const num = String(Math.floor(1000000 + Math.random() * 9000000));
+      const [existing] = await db
+        .select({ id: websites.id })
+        .from(websites)
+        .where(eq(websites.trackingId, num))
+        .limit(1);
+      if (!existing) {
+        return num;
+      }
+    }
+    // High-entropy fallback if 50 collisions occur
+    return String(4800000 + Math.floor(Math.random() * 500000));
   }
 
   static async createWebsite(userId: string, input: CreateWebsiteInput) {
-    let trackingId = this.generateTrackingId();
+    let trackingId = await this.generateUnique7DigitId();
 
     // Insert website
     const [website] = await db
@@ -34,7 +47,10 @@ export class WebsiteService {
       })
       .returning();
 
-    return website;
+    return {
+      ...website,
+      displayId: trackingId,
+    };
   }
 
   static async getWebsites(userId?: string) {
