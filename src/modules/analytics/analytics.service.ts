@@ -33,6 +33,10 @@ export class AnalyticsService {
   }
 
   private static getFromCache<T>(key: string): T | null {
+    // Bypass caching for analytics queries so every click fetches 100% fresh live data without stale cache
+    if (!key.startsWith("website:")) {
+      return null;
+    }
     const entry = this.cache.get(key);
     if (!entry) return null;
     if (Date.now() > entry.expiresAt) {

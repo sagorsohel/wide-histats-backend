@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const analyticsFilterSchema = z.object({
-  websiteId: z.string().uuid("Invalid website ID format"),
+  websiteId: z.string().min(1, "Website ID is required"),
   from: z
     .string()
     .optional()

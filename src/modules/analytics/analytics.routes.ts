@@ -19,7 +19,7 @@ router.get(
 router.get(
   "/realtime",
   validateRequest({
-    query: z.object({ websiteId: z.string().uuid() }),
+    query: z.object({ websiteId: z.string().min(1, "Website ID is required") }),
   }),
   AnalyticsController.realtime
 );
