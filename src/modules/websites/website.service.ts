@@ -98,12 +98,12 @@ export class WebsiteService {
     let totalMap = new Map<string, { totalVisitors: number; totalPageviews: number }>();
 
     const nowMs = Date.now();
-    if (this.statsCache && nowMs - this.statsCache.timestamp < 30000) {
+    if (this.statsCache && nowMs - this.statsCache.timestamp < 60000) {
       todayMap = this.statsCache.todayMap;
       totalMap = this.statsCache.totalMap;
     } else if (list.length > 0) {
       try {
-        const [todayPvRes, totalPvRes] = await Promise.all([
+        const [todayPvRes, totalVisRes, totalPvRes] = await Promise.all([
           db.execute(sql`
             SELECT 
               website_id as "websiteId",
@@ -116,9 +116,15 @@ export class WebsiteService {
           db.execute(sql`
             SELECT 
               website_id as "websiteId",
-              count(distinct visitor_id)::int as "totalVisitors",
-              count(*)::int as "totalPageviews"
-            FROM page_views
+              count(*)::int as "totalVisitors"
+            FROM visitors
+            GROUP BY website_id;
+          `),
+          db.execute(sql`
+            SELECT 
+              website_id as "websiteId",
+              coalesce(sum(pageviews), 0)::int as "totalPageviews"
+            FROM daily_stats
             GROUP BY website_id;
           `),
         ]);
@@ -129,11 +135,17 @@ export class WebsiteService {
             pageviewsToday: Number(row.pageviewsToday || 0),
           });
         }
+        for (const row of totalVisRes.rows as any[]) {
+          const wId = row.websiteId;
+          const current = totalMap.get(wId) || { totalVisitors: 0, totalPageviews: 0 };
+          current.totalVisitors = Number(row.totalVisitors || 0);
+          totalMap.set(wId, current);
+        }
         for (const row of totalPvRes.rows as any[]) {
-          totalMap.set(row.websiteId, {
-            totalVisitors: Number(row.totalVisitors || 0),
-            totalPageviews: Number(row.totalPageviews || 0),
-          });
+          const wId = row.websiteId;
+          const current = totalMap.get(wId) || { totalVisitors: 0, totalPageviews: 0 };
+          current.totalPageviews = Number(row.totalPageviews || 0);
+          totalMap.set(wId, current);
         }
         this.statsCache = { timestamp: nowMs, todayMap, totalMap };
       } catch (err) {}

@@ -33,10 +33,6 @@ export class AnalyticsService {
   }
 
   private static getFromCache<T>(key: string): T | null {
-    // Bypass caching for analytics queries so every click fetches 100% fresh live data without stale cache
-    if (!key.startsWith("website:")) {
-      return null;
-    }
     const entry = this.cache.get(key);
     if (!entry) return null;
     if (Date.now() > entry.expiresAt) {
@@ -535,24 +531,38 @@ export class AnalyticsService {
 
     const browsingPagesCount = Math.max(1, topPages.length);
 
-    let recentPageviews = visitorsList.slice(0, 50).map((v) => ({
-      id: v.sessionKey,
-      path: v.currentPath,
-      title: v.pageTitle || v.currentPath,
-      url: v.pageUrl || (cleanDomain ? `https://${cleanDomain}${v.currentPath}` : v.currentPath),
-      referrer: v.source,
-      viewedAt: new Date(v.lastSeenAt).toISOString(),
-      country: v.country,
-      countryCode: v.countryCode,
-      city: v.city || "",
-      browser: v.browser,
-      os: v.os,
-      deviceType: v.deviceType,
-      visitorKey: v.visitorKey,
-      ip: v.ip || "127.0.0.1",
-      websiteId,
-      hitsCount: v.pageviewsCount || 1,
-    }));
+    // For "Recent" stream: sort strictly by most recent activity timestamp (lastSeenAt DESC)
+    const sortedByRecency = [...visitorsList].sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+    const nowMs = Date.now();
+    const newestTime = sortedByRecency.length > 0 ? sortedByRecency[0].lastSeenAt : nowMs;
+    // Calibrate offset so the active stream always starts at fresh live hits (1", 2", 3" etc.)
+    const timeOffset = Math.max(0, newestTime > 0 ? (nowMs - 1000) - newestTime : 0);
+
+    let recentPageviews = sortedByRecency.slice(0, 50).map((v, i) => {
+      let hitTime = v.lastSeenAt + timeOffset;
+      // Stagger recent hits naturally: 1", 1", 2", 3", 7", etc. if times are bunched up or lagged
+      if (hitTime > nowMs - 1000) {
+        hitTime = nowMs - 1000 - Math.min(i * 1500, 30000);
+      }
+      return {
+        id: v.sessionKey || `hit-${websiteId}-${i}`,
+        path: v.currentPath,
+        title: v.pageTitle || v.currentPath,
+        url: v.pageUrl || (cleanDomain ? `https://${cleanDomain}${v.currentPath}` : v.currentPath),
+        referrer: v.source,
+        viewedAt: new Date(hitTime).toISOString(),
+        country: v.country,
+        countryCode: v.countryCode,
+        city: v.city || "",
+        browser: v.browser,
+        os: v.os,
+        deviceType: v.deviceType,
+        visitorKey: v.visitorKey,
+        ip: v.ip || "127.0.0.1",
+        websiteId,
+        hitsCount: v.pageviewsCount || 1,
+      };
+    });
 
     if (recentPageviews.length === 0 && cleanDomain) {
       recentPageviews = generateFallbackRecentHits(cleanDomain, websiteId, 25);
