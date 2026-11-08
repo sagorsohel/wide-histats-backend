@@ -441,26 +441,60 @@ export class AnalyticsService {
     const totalPageviews = totals.totalPageviews;
 
     // Histats act=18 Architecture: Derive real-time presence directly from in-memory active visitors (0ms response)
-    const pageCountsMap = new Map<string, { title: string; url: string; count: number }>();
+    const pageCountsMap = new Map<string, { title: string; url: string; path: string; count: number }>();
+    const titleToPageKeyMap = new Map<string, string>();
     const referrerCountsMap = new Map<string, number>();
     const countryCountsMap = new Map<string, { country: string; code: string; count: number }>();
     const devicesMap: Record<string, number> = {};
     const sourcesMap: Record<string, number> = {};
 
     for (const v of visitorsList) {
-      // 1. Pages
-      const p = v.currentPath || "/";
-      const existingPage = pageCountsMap.get(p);
+      // 1. Pages - Normalize path & URL so identical links/pages never fragment
+      let p = (v.currentPath || "/").trim();
+      if (p.startsWith("http://") || p.startsWith("https://")) {
+        try {
+          const u = new URL(p);
+          p = `${u.pathname}${u.search}`;
+        } catch {
+          p = p.replace(/^https?:\/\/[^\/]+/i, "");
+        }
+      }
+      if (!p.startsWith("/")) p = "/" + p;
+
+      const fullUrl = v.pageUrl && (v.pageUrl.startsWith("http://") || v.pageUrl.startsWith("https://"))
+        ? (cleanDomain ? v.pageUrl.replace(/techblog\.example\.com|example\.com/g, cleanDomain) : v.pageUrl)
+        : cleanDomain
+          ? `https://${cleanDomain}${p}`
+          : p;
+
+      // Grouping key: normalized URL / path (lowercase, no trailing slash)
+      let pageKey = fullUrl.toLowerCase().replace(/\/+$/, "") || p.toLowerCase();
+      const cleanTitle = (v.pageTitle || "").trim().toLowerCase();
+      const isSpecificTitle = cleanTitle.length > 5 && !cleanTitle.includes("home page") && cleanTitle !== "home";
+
+      if (!pageCountsMap.has(pageKey) && isSpecificTitle && titleToPageKeyMap.has(cleanTitle)) {
+        pageKey = titleToPageKeyMap.get(cleanTitle)!;
+      }
+
+      const existingPage = pageCountsMap.get(pageKey);
       if (existingPage) {
         existingPage.count += 1;
-        if (v.pageTitle && !existingPage.title) existingPage.title = v.pageTitle;
-        if (v.pageUrl && !existingPage.url) existingPage.url = v.pageUrl;
+        if (v.pageTitle && (!existingPage.title || existingPage.title === existingPage.path || v.pageTitle.length > existingPage.title.length)) {
+          existingPage.title = v.pageTitle;
+        }
+        if (v.pageUrl && !existingPage.url) {
+          existingPage.url = fullUrl;
+        }
       } else {
-        pageCountsMap.set(p, {
+        pageCountsMap.set(pageKey, {
+          path: p,
           title: v.pageTitle || p,
-          url: v.pageUrl || (cleanDomain ? `https://${cleanDomain}${p}` : p),
+          url: fullUrl,
           count: 1,
         });
+        if (isSpecificTitle) {
+          titleToPageKeyMap.set(cleanTitle, pageKey);
+        }
       }
 
       // 2. Referrers
@@ -486,9 +520,9 @@ export class AnalyticsService {
       devicesMap[dev] = (devicesMap[dev] || 0) + 1;
     }
 
-    let topPages = Array.from(pageCountsMap.entries())
-      .map(([path, data]) => ({
-        path,
+    let topPages = Array.from(pageCountsMap.values())
+      .map((data) => ({
+        path: data.path,
         title: data.title,
         url: cleanDomain && data.url ? data.url.replace(/techblog\.example\.com|example\.com/g, cleanDomain) : data.url,
         count: data.count,
