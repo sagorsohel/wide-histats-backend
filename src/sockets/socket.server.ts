@@ -160,6 +160,13 @@ export const initSocketServer = (httpServer: HttpServer): SocketIOServer => {
     });
   });
 
+  // Automatically broadcast real-time pageviews to subscribed room
+  realtimeService.onHit((websiteId: string, hit: any) => {
+    if (!io) return;
+    const room = `website:${websiteId}`;
+    io.to(room).emit("website:pageview", hit);
+  });
+
   logger.info("Socket.IO server initialized successfully.");
   return io;
 };

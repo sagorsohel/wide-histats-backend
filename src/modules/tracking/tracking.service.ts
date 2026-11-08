@@ -219,7 +219,9 @@ export class TrackingService {
       ip: ip || "127.0.0.1",
     });
 
-    SocketEvents.emitPageView(website.id, {
+    const hitData = {
+      id: `hit-${pageview.id}`,
+      websiteId: website.id,
       path: input.path || "/",
       title: input.title || "",
       url: input.url,
@@ -233,9 +235,11 @@ export class TrackingService {
       deviceType: device.deviceType,
       source: attribution.source,
       ip: ip || "127.0.0.1",
+      viewedAt: now.toISOString(),
       hitsCount: realtimeService.getVisitorPageviews(website.id, input.visitorKey),
-    });
+    };
 
+    realtimeService.recordHit(website.id, hitData);
     SocketEvents.emitVisitorActivity(website.id);
 
     return {

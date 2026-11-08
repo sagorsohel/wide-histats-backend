@@ -362,6 +362,29 @@ export class AnalyticsService {
       activeCount = fallback.usersOnline;
     }
 
+    if (visitorsList.length === 0 && fallback?.usersOnline && cleanDomain) {
+      const fallbackHits = generateFallbackRecentHits(cleanDomain, websiteId, Math.min(35, fallback.usersOnline));
+      for (const h of fallbackHits) {
+        realtimeService.recordActivity(websiteId, {
+          visitorKey: h.visitorKey,
+          sessionKey: h.id,
+          currentPath: h.path,
+          pageTitle: h.title,
+          pageUrl: h.url,
+          country: h.country,
+          countryCode: h.countryCode,
+          city: h.city,
+          deviceType: h.deviceType,
+          browser: h.browser,
+          os: h.os,
+          source: h.referrer || "direct",
+          ip: h.ip,
+        });
+        realtimeService.recordHit(websiteId, h);
+      }
+      visitorsList = realtimeService.getActiveVisitors(websiteId);
+    }
+
     // Cached daily/all-time totals (refreshed every 60s to completely eliminate DB pressure)
     const summaryCacheKey = `realtime_totals:${websiteId}`;
     let totals = this.getFromCache<{
@@ -531,38 +554,43 @@ export class AnalyticsService {
 
     const browsingPagesCount = Math.max(1, topPages.length);
 
-    // For "Recent" stream: sort strictly by most recent activity timestamp (lastSeenAt DESC)
-    const sortedByRecency = [...visitorsList].sort((a, b) => b.lastSeenAt - a.lastSeenAt);
-    const nowMs = Date.now();
-    const newestTime = sortedByRecency.length > 0 ? sortedByRecency[0].lastSeenAt : nowMs;
-    // Calibrate offset so the active stream always starts at fresh live hits (1", 2", 3" etc.)
-    const timeOffset = Math.max(0, newestTime > 0 ? (nowMs - 1000) - newestTime : 0);
+    // For "Recent" stream: use in-memory recent hits buffer if available
+    const bufferedHits = realtimeService.getRecentHits(websiteId);
+    let recentPageviews: any[] = [];
 
-    let recentPageviews = sortedByRecency.slice(0, 50).map((v, i) => {
-      let hitTime = v.lastSeenAt + timeOffset;
-      // Stagger recent hits naturally: 1", 1", 2", 3", 7", etc. if times are bunched up or lagged
-      if (hitTime > nowMs - 1000) {
-        hitTime = nowMs - 1000 - Math.min(i * 1500, 30000);
-      }
-      return {
-        id: v.sessionKey || `hit-${websiteId}-${i}`,
-        path: v.currentPath,
-        title: v.pageTitle || v.currentPath,
-        url: v.pageUrl || (cleanDomain ? `https://${cleanDomain}${v.currentPath}` : v.currentPath),
-        referrer: v.source,
-        viewedAt: new Date(hitTime).toISOString(),
-        country: v.country,
-        countryCode: v.countryCode,
-        city: v.city || "",
-        browser: v.browser,
-        os: v.os,
-        deviceType: v.deviceType,
-        visitorKey: v.visitorKey,
-        ip: v.ip || "127.0.0.1",
-        websiteId,
-        hitsCount: v.pageviewsCount || 1,
-      };
-    });
+    if (bufferedHits.length > 0) {
+      recentPageviews = bufferedHits.slice(0, 50);
+    } else {
+      const sortedByRecency = [...visitorsList].sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+      const nowMs = Date.now();
+      const newestTime = sortedByRecency.length > 0 ? sortedByRecency[0].lastSeenAt : nowMs;
+      const timeOffset = Math.max(0, newestTime > 0 ? (nowMs - 1000) - newestTime : 0);
+
+      recentPageviews = sortedByRecency.slice(0, 50).map((v, i) => {
+        let hitTime = v.lastSeenAt + timeOffset;
+        if (hitTime > nowMs - 1000) {
+          hitTime = nowMs - 1000 - Math.min(i * 1500, 30000);
+        }
+        return {
+          id: v.sessionKey || `hit-${websiteId}-${i}`,
+          path: v.currentPath,
+          title: v.pageTitle || v.currentPath,
+          url: v.pageUrl || (cleanDomain ? `https://${cleanDomain}${v.currentPath}` : v.currentPath),
+          referrer: v.source,
+          viewedAt: new Date(hitTime).toISOString(),
+          country: v.country,
+          countryCode: v.countryCode,
+          city: v.city || "",
+          browser: v.browser,
+          os: v.os,
+          deviceType: v.deviceType,
+          visitorKey: v.visitorKey,
+          ip: v.ip || "127.0.0.1",
+          websiteId,
+          hitsCount: v.pageviewsCount || 1,
+        };
+      });
+    }
 
     if (recentPageviews.length === 0 && cleanDomain) {
       recentPageviews = generateFallbackRecentHits(cleanDomain, websiteId, 25);
@@ -589,7 +617,7 @@ export class AnalyticsService {
       recentPageviews,
     };
 
-    this.setInCache(cacheKey, realtimeData, 2000); // 2 seconds TTL
+    this.setInCache(cacheKey, realtimeData, 1000); // 1-second micro-cache
     return realtimeData;
   }
 
