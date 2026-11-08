@@ -442,7 +442,6 @@ export class AnalyticsService {
 
     // Histats act=18 Architecture: Derive real-time presence directly from in-memory active visitors (0ms response)
     const pageCountsMap = new Map<string, { title: string; url: string; path: string; count: number }>();
-    const titleToPageKeyMap = new Map<string, string>();
     const referrerCountsMap = new Map<string, number>();
     const countryCountsMap = new Map<string, { country: string; code: string; count: number }>();
     const devicesMap: Record<string, number> = {};
@@ -467,13 +466,18 @@ export class AnalyticsService {
           ? `https://${cleanDomain}${p}`
           : p;
 
-      // Grouping key: normalized URL / path (lowercase, no trailing slash)
-      let pageKey = fullUrl.toLowerCase().replace(/\/+$/, "") || p.toLowerCase();
-      const cleanTitle = (v.pageTitle || "").trim().toLowerCase();
-      const isSpecificTitle = cleanTitle.length > 5 && !cleanTitle.includes("home page") && cleanTitle !== "home";
-
-      if (!pageCountsMap.has(pageKey) && isSpecificTitle && titleToPageKeyMap.has(cleanTitle)) {
-        pageKey = titleToPageKeyMap.get(cleanTitle)!;
+      // Grouping key strictly by unique link / URL (so distinct links show separately, identical links group together)
+      let pageKey = "";
+      try {
+        if (fullUrl.startsWith("http://") || fullUrl.startsWith("https://")) {
+          const u = new URL(fullUrl);
+          const pathname = u.pathname.length > 1 && u.pathname.endsWith("/") ? u.pathname.slice(0, -1) : u.pathname;
+          pageKey = `${u.origin.toLowerCase()}${pathname}${u.search}`;
+        } else {
+          pageKey = (fullUrl || p).toLowerCase().replace(/\/+$/, "") || "/";
+        }
+      } catch {
+        pageKey = (fullUrl || p).toLowerCase().replace(/\/+$/, "") || "/";
       }
 
       const existingPage = pageCountsMap.get(pageKey);
@@ -488,13 +492,10 @@ export class AnalyticsService {
       } else {
         pageCountsMap.set(pageKey, {
           path: p,
-          title: v.pageTitle || p,
+          title: v.pageTitle || fullUrl || p,
           url: fullUrl,
           count: 1,
         });
-        if (isSpecificTitle) {
-          titleToPageKeyMap.set(cleanTitle, pageKey);
-        }
       }
 
       // 2. Referrers - Normalize to clean domain so duplicate paths don't fragment counts
@@ -521,6 +522,37 @@ export class AnalyticsService {
       // 4. Devices
       const dev = v.deviceType || "desktop";
       devicesMap[dev] = (devicesMap[dev] || 0) + 1;
+    }
+
+    // Also populate distinct pages from recent hits buffer so any newly visited links appear immediately
+    const recentHitsBuffer = realtimeService.getRecentHits(websiteId);
+    for (const h of recentHitsBuffer) {
+      if (!h) continue;
+      const hPath = (h.path || "/").trim();
+      const hUrl = h.url || (cleanDomain ? `https://${cleanDomain}${hPath}` : hPath);
+      let pageKey = "";
+      try {
+        if (hUrl.startsWith("http://") || hUrl.startsWith("https://")) {
+          const u = new URL(hUrl);
+          const pathname = u.pathname.length > 1 && u.pathname.endsWith("/") ? u.pathname.slice(0, -1) : u.pathname;
+          pageKey = `${u.origin.toLowerCase()}${pathname}${u.search}`;
+        } else {
+          pageKey = (hUrl || hPath).toLowerCase().replace(/\/+$/, "") || "/";
+        }
+      } catch {
+        pageKey = (hUrl || hPath).toLowerCase().replace(/\/+$/, "") || "/";
+      }
+
+      if (pageCountsMap.has(pageKey)) {
+        pageCountsMap.get(pageKey)!.count += 1;
+      } else {
+        pageCountsMap.set(pageKey, {
+          path: hPath,
+          title: h.title || hUrl || hPath,
+          url: hUrl,
+          count: 1,
+        });
+      }
     }
 
     let topPages = Array.from(pageCountsMap.values())
