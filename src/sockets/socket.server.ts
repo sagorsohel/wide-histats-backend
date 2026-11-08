@@ -87,11 +87,12 @@ export const initSocketServer = (httpServer: HttpServer): SocketIOServer => {
 
         const userId = (socket as any).userId;
 
-        // Verify website exists
+        // Verify website exists by UUID or numeric trackingId
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(websiteId);
         const [website] = await db
           .select()
           .from(websites)
-          .where(eq(websites.id, websiteId))
+          .where(isUuid ? eq(websites.id, websiteId) : eq(websites.trackingId, websiteId))
           .limit(1);
 
         if (!website) {
@@ -99,20 +100,21 @@ export const initSocketServer = (httpServer: HttpServer): SocketIOServer => {
           return;
         }
 
-        // Histats behavior: Anyone viewing the live realtime stats for a valid website can subscribe to the room
-        const room = `website:${websiteId}`;
-        socket.join(room);
-        logger.debug(`Socket ${socket.id} joined room ${room}`);
+        // Histats behavior: Join rooms for BOTH UUID and numeric trackingId
+        socket.join(`website:${website.id}`);
+        socket.join(`website:${website.trackingId}`);
+        socket.join(`website:${websiteId}`);
+        logger.debug(`Socket ${socket.id} joined rooms for website ${website.id} (${website.trackingId})`);
 
         // Emit current active visitor state immediately (0ms)
-        let activeCount = realtimeService.getActiveCount(websiteId);
+        let activeCount = realtimeService.getActiveCount(website.id);
         if (activeCount === 0) {
-          await realtimeService.syncFromDatabase(websiteId);
-          activeCount = realtimeService.getActiveCount(websiteId);
+          await realtimeService.syncFromDatabase(website.id);
+          activeCount = realtimeService.getActiveCount(website.id);
         }
 
-        let activeCount5m = realtimeService.getActiveCount(websiteId, 5 * 60 * 1000);
-        let activeCount15m = realtimeService.getActiveCount(websiteId, 15 * 60 * 1000);
+        let activeCount5m = realtimeService.getActiveCount(website.id, 5 * 60 * 1000);
+        let activeCount15m = realtimeService.getActiveCount(website.id, 15 * 60 * 1000);
 
         if (activeCount === 0 && website?.domain) {
           const fallback = getBaselineStats(website.domain);
@@ -123,9 +125,10 @@ export const initSocketServer = (httpServer: HttpServer): SocketIOServer => {
           }
         }
 
-        const activeVisitors = realtimeService.getActiveVisitors(websiteId);
+        const activeVisitors = realtimeService.getActiveVisitors(website.id);
         socket.emit("website:realtime_init", {
-          websiteId,
+          websiteId: website.id,
+          trackingId: website.trackingId,
           activeCount,
           activeCount5m,
           activeCount15m,

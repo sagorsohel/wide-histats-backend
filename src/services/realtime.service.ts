@@ -64,10 +64,10 @@ class RealtimeService {
     }, 10000);
 
     // Continuous Live Real-Time Hits Streamer: For websites with active online visitors,
-    // generates continuous real-time hits every 1.8 seconds, matching Histats act=18 stream perfectly
+    // generates continuous real-time hits every 1.0 second, matching Histats act=18 stream perfectly
     setInterval(() => {
       this.streamLiveHit();
-    }, 1800);
+    }, 1000);
   }
 
   public onActivity(listener: (websiteId: string) => void) {
