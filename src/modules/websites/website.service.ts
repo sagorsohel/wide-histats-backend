@@ -77,7 +77,7 @@ export class WebsiteService {
       .from(websites)
       .where(
         userId
-          ? or(eq(websites.userId, userId), eq(websites.isPublic, true))
+          ? eq(websites.userId, userId)
           : eq(websites.isPublic, true)
       )
       .orderBy(websites.createdAt);
