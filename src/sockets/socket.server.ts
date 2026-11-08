@@ -116,15 +116,6 @@ export const initSocketServer = (httpServer: HttpServer): SocketIOServer => {
         let activeCount5m = realtimeService.getActiveCount(website.id, 5 * 60 * 1000);
         let activeCount15m = realtimeService.getActiveCount(website.id, 15 * 60 * 1000);
 
-        if (activeCount === 0 && website?.domain) {
-          const fallback = getBaselineStats(website.domain);
-          if (fallback.usersOnline > 0) {
-            activeCount = fallback.usersOnline;
-            activeCount5m = Math.max(activeCount5m, Math.floor(activeCount * 0.96));
-            activeCount15m = Math.max(activeCount15m, Math.floor(activeCount * 0.90));
-          }
-        }
-
         const activeVisitors = realtimeService.getActiveVisitors(website.id);
         socket.emit("website:realtime_init", {
           websiteId: website.id,

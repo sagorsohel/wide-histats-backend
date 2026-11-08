@@ -298,7 +298,6 @@ export class AnalyticsService {
       .limit(1);
 
     const cleanDomain = site?.domain ? getCleanDomain(site.domain) : "";
-    const fallback = cleanDomain ? getBaselineStats(cleanDomain) : null;
 
     const cacheKey = `realtime:${websiteId}`;
     const cached = this.getFromCache<any>(cacheKey);
@@ -306,8 +305,6 @@ export class AnalyticsService {
       let currentActive = realtimeService.getActiveCount(websiteId);
       if (currentActive === 0 && cached.activeCount > 0) {
         currentActive = cached.activeCount;
-      } else if (currentActive === 0 && fallback?.usersOnline) {
-        currentActive = fallback.usersOnline;
       }
       cached.activeCount = currentActive;
       cached.activeCount5m = realtimeService.getActiveCount(websiteId, 5 * 60 * 1000) || Math.floor(currentActive * 0.96);
@@ -358,33 +355,6 @@ export class AnalyticsService {
       visitorsList = realtimeService.getActiveVisitors(websiteId);
     }
 
-    if (activeCount === 0 && fallback?.usersOnline) {
-      activeCount = fallback.usersOnline;
-    }
-
-    if (visitorsList.length === 0 && fallback?.usersOnline && cleanDomain) {
-      const fallbackHits = generateFallbackRecentHits(cleanDomain, websiteId, Math.min(35, fallback.usersOnline));
-      for (const h of fallbackHits) {
-        realtimeService.recordActivity(websiteId, {
-          visitorKey: h.visitorKey,
-          sessionKey: h.id,
-          currentPath: h.path,
-          pageTitle: h.title,
-          pageUrl: h.url,
-          country: h.country,
-          countryCode: h.countryCode,
-          city: h.city,
-          deviceType: h.deviceType,
-          browser: h.browser,
-          os: h.os,
-          source: h.referrer || "direct",
-          ip: h.ip,
-        });
-        realtimeService.recordHit(websiteId, h);
-      }
-      visitorsList = realtimeService.getActiveVisitors(websiteId);
-    }
-
     // Cached daily/all-time totals (refreshed every 60s to completely eliminate DB pressure)
     const summaryCacheKey = `realtime_totals:${websiteId}`;
     let totals = this.getFromCache<{
@@ -419,18 +389,18 @@ export class AnalyticsService {
         const rawTotalPv = Number((totalRes.rows[0] as any)?.totalPageviews || 0);
 
         totals = {
-          todayVisitors: rawTodayVis > 0 ? rawTodayVis : (fallback?.visitorsToday || 0),
-          todayPageviews: rawTodayPv > 0 ? rawTodayPv : (fallback?.pageviewsToday || 0),
-          totalVisitors: rawTotalVis > 0 ? rawTotalVis : (fallback?.totalVisitors || 0),
-          totalPageviews: rawTotalPv > 0 ? rawTotalPv : (fallback?.totalPageviews || 0),
+          todayVisitors: rawTodayVis,
+          todayPageviews: rawTodayPv,
+          totalVisitors: rawTotalVis,
+          totalPageviews: rawTotalPv,
         };
         this.setInCache(summaryCacheKey, totals, 60000); // 1 minute TTL
       } catch {
         totals = {
-          todayVisitors: fallback?.visitorsToday || 0,
-          todayPageviews: fallback?.pageviewsToday || 0,
-          totalVisitors: fallback?.totalVisitors || 0,
-          totalPageviews: fallback?.totalPageviews || 0,
+          todayVisitors: 0,
+          todayPageviews: 0,
+          totalVisitors: 0,
+          totalPageviews: 0,
         };
       }
     }
@@ -573,21 +543,6 @@ export class AnalyticsService {
 
     const topCountries = Array.from(countryCountsMap.values())
       .sort((a, b) => b.count - a.count);
-
-    // Fallbacks if cold booted with baseline
-    if (topPages.length === 0 && cleanDomain && activeCount > 0) {
-      topPages = generateFallbackTopPages(cleanDomain, Math.min(8, activeCount));
-    }
-    if (topReferrers.length === 0 && activeCount > 0) {
-      topReferrers = [
-        { referrer: "google.com", count: Math.floor(activeCount * 0.44) },
-        { referrer: "direct", count: Math.floor(activeCount * 0.22) },
-        { referrer: "facebook.com", count: Math.floor(activeCount * 0.14) },
-        { referrer: "t.co", count: Math.floor(activeCount * 0.10) },
-        { referrer: "bing.com", count: Math.floor(activeCount * 0.06) },
-        { referrer: "youtube.com", count: Math.floor(activeCount * 0.04) },
-      ].filter((r) => r.count > 0);
-    }
 
     // Mathematical guarantee: Sum of popular pages counts must strictly match activeCount
     if (topPages.length > 0 && activeCount > 0) {

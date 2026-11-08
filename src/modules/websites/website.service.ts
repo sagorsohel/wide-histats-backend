@@ -153,33 +153,19 @@ export class WebsiteService {
 
     // Attach active visitors count and daily/total counts in 0ms (no loop queries)
     return list.map((site) => {
-      const fallback = getBaselineStats(site.domain);
-
       // Real in-memory active count right now
-      let realActive = realtimeService.getActiveCount(site.id);
-      const usersOnline = realActive > 0 ? realActive : (fallback.usersOnline ?? 0);
+      const usersOnline = realtimeService.getActiveCount(site.id);
 
       const dbToday = todayMap.get(site.id);
       const dbTotal = totalMap.get(site.id);
 
-      const visitorsToday = dbToday?.visitorsToday && dbToday.visitorsToday > 0 
-        ? dbToday.visitorsToday 
-        : (fallback.visitorsToday || 0);
-
-      const pageviewsToday = dbToday?.pageviewsToday && dbToday.pageviewsToday > 0 
-        ? dbToday.pageviewsToday 
-        : (fallback.pageviewsToday || 0);
-
-      const totalVisitors = dbTotal?.totalVisitors && dbTotal.totalVisitors > 0 
-        ? dbTotal.totalVisitors 
-        : (fallback.totalVisitors || 0);
-
-      const totalPageviews = dbTotal?.totalPageviews && dbTotal.totalPageviews > 0 
-        ? dbTotal.totalPageviews 
-        : (fallback.totalPageviews || 0);
+      const visitorsToday = dbToday?.visitorsToday || 0;
+      const pageviewsToday = dbToday?.pageviewsToday || 0;
+      const totalVisitors = dbTotal?.totalVisitors || 0;
+      const totalPageviews = dbTotal?.totalPageviews || 0;
 
       // Clean numeric 7-digit ID for display
-      let displayId = fallback.displayId || site.trackingId.replace(/[^0-9]/g, "");
+      let displayId = site.trackingId.replace(/[^0-9]/g, "") || site.trackingId;
       if (!displayId || displayId.length < 5) {
         // Generate a deterministic 7-digit ID from site UUID
         let hash = 0;
