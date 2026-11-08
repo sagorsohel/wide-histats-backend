@@ -497,8 +497,11 @@ export class AnalyticsService {
         }
       }
 
-      // 2. Referrers
-      const ref = v.source || "direct";
+      // 2. Referrers - Normalize to clean domain so duplicate paths don't fragment counts
+      let ref = (v.source || "direct").trim();
+      if (ref !== "direct" && ref.length > 0) {
+        ref = ref.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0].trim().toLowerCase() || "direct";
+      }
       referrerCountsMap.set(ref, (referrerCountsMap.get(ref) || 0) + 1);
       sourcesMap[ref] = (sourcesMap[ref] || 0) + 1;
 
