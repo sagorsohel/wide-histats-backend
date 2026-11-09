@@ -4,11 +4,7 @@ import { websites } from "../../db/schema/websites.js";
 import { AnalyticsFilterInput } from "./analytics.schema.js";
 import { realtimeService } from "../../services/realtime.service.js";
 import {
-  getBaselineStats,
   getCleanDomain,
-  generateFallbackTopPages,
-  generateFallbackRecentHits,
-  generateFallbackDetailedReferrers,
 } from "../../constants/baselineStats.js";
 
 interface CacheEntry {
@@ -105,12 +101,11 @@ export class AnalyticsService {
       }
 
       if (!dbWebsite) {
-        // Fallback: match by baseline 7-digit displayId or deterministic hash
+        // Fallback: match by 7-digit displayId or deterministic hash
         const allSites = await db.select().from(websites);
         dbWebsite = allSites.find((s) => {
           if (s.trackingId === websiteId) return true;
-          const fallback = getBaselineStats(s.domain);
-          let disp = fallback.displayId || s.trackingId.replace(/[^0-9]/g, "");
+          let disp = s.trackingId.replace(/[^0-9]/g, "");
           if (!disp || disp.length < 5) {
             let hash = 0;
             for (let i = 0; i < s.id.length; i++) {
@@ -247,44 +242,17 @@ export class AnalyticsService {
 
     let firstTimeVisitors = Number(newVisRow?.firstTimeVisitors || 0);
     let returningVisitors = Math.max(0, uniqueVisitors - firstTimeVisitors);
-    let newVisitorsPct = uniqueVisitors > 0 ? Number(((firstTimeVisitors / uniqueVisitors) * 100).toFixed(1)) : 94.2;
-    let returningVisitorsPct = uniqueVisitors > 0 ? Number((100 - newVisitorsPct).toFixed(1)) : 5.8;
+    let newVisitorsPct = uniqueVisitors > 0 ? Number(((firstTimeVisitors / uniqueVisitors) * 100).toFixed(1)) : 0;
+    let returningVisitorsPct = uniqueVisitors > 0 ? Number((100 - newVisitorsPct).toFixed(1)) : 0;
 
-    const [site] = await db
-      .select({ domain: websites.domain })
-      .from(websites)
-      .where(eq(websites.id, filter.websiteId))
-      .limit(1);
-    const cleanDomain = site?.domain ? getCleanDomain(site.domain) : "";
-    const fallback = cleanDomain ? getBaselineStats(cleanDomain) : null;
-
-    if (totalPageviews === 0 && fallback) {
-      const fromMs = new Date(fromDate).getTime();
-      const toMs = new Date(toDate).getTime();
-      const daysCount = Math.max(1, Math.min(30, Math.round((toMs - fromMs) / (1000 * 60 * 60 * 24))));
-
-      uniqueVisitors = Math.round(fallback.visitorsToday * daysCount);
-      totalPageviews = Math.round(fallback.pageviewsToday * daysCount);
-      totalSessions = Math.round(uniqueVisitors * 1.25);
-      avgDuration = 52;
-      bounceRate = 82;
-      firstTimeVisitors = Math.round(uniqueVisitors * 0.942);
-      returningVisitors = Math.round(uniqueVisitors * 0.058);
-      newVisitorsPct = 94.2;
-      returningVisitorsPct = 5.8;
-    }
-
-    const allTimeVisitors = Number(allTimeRow?.allTimeVisitors || fallback?.totalVisitors || 0);
-    const allTimePageviews = Number(allTimeRow?.allTimePageviews || fallback?.totalPageviews || 0);
-    const allTimeSessions = Number(allTimeRow?.allTimeSessions || Math.round((fallback?.totalVisitors || 0) * 1.25) || 0);
+    const allTimeVisitors = Number(allTimeRow?.allTimeVisitors || 0);
+    const allTimePageviews = Number(allTimeRow?.allTimePageviews || 0);
+    const allTimeSessions = Number(allTimeRow?.allTimeSessions || 0);
 
     let activeVisitors = realtimeService.getActiveCount(filter.websiteId);
     if (activeVisitors === 0) {
       await realtimeService.syncFromDatabase(filter.websiteId);
       activeVisitors = realtimeService.getActiveCount(filter.websiteId);
-    }
-    if (activeVisitors === 0 && fallback?.usersOnline) {
-      activeVisitors = fallback.usersOnline;
     }
 
     const overviewData = {
@@ -639,12 +607,8 @@ export class AnalyticsService {
       });
     }
 
-    if (recentPageviews.length === 0 && cleanDomain) {
-      recentPageviews = generateFallbackRecentHits(cleanDomain, websiteId, 25);
-    }
-
-    const activeCount5m = realtimeService.getActiveCount(websiteId, 5 * 60 * 1000) || Math.floor(activeCount * 0.96);
-    const activeCount15m = realtimeService.getActiveCount(websiteId, 15 * 60 * 1000) || Math.floor(activeCount * 0.90);
+    const activeCount5m = realtimeService.getActiveCount(websiteId, 5 * 60 * 1000);
+    const activeCount15m = realtimeService.getActiveCount(websiteId, 15 * 60 * 1000);
 
     const realtimeData = {
       activeCount,
@@ -730,47 +694,16 @@ export class AnalyticsService {
         totalVis = Number(row?.vis || 0);
       }
 
-      // Realistic 24-hour diurnal traffic weights (diurnal bell curve with peaks at 11am-4pm & 7pm-10pm)
-      const diurnalWeights = [
-        0.015, 0.012, 0.009, 0.007, 0.009, 0.018, // 00:00 - 05:00
-        0.035, 0.052, 0.065, 0.070, 0.068, 0.065, // 06:00 - 11:00
-        0.062, 0.065, 0.070, 0.072, 0.068, 0.062, // 12:00 - 17:00
-        0.058, 0.055, 0.050, 0.040, 0.028, 0.020  // 18:00 - 23:00
-      ];
-
       const fullHours: any[] = [];
-      const hasNaturalHourlySpread = hourlyResult.rows.length >= 8;
-
       for (let h = 0; h < 24; h++) {
         const hourStr = `${h.toString().padStart(2, '0')}:00`;
-
-        if (hasNaturalHourlySpread) {
-          const existing = hourMap.get(hourStr);
-          fullHours.push({
-            date: hourStr,
-            pageviews: existing ? Number(existing.pageviews) : 0,
-            visitors: existing ? Number(existing.visitors) : 0,
-            sessions: existing ? Number(existing.sessions) : 0,
-          });
-        } else if (totalPvs > 0) {
-          // Distribute total volume along authentic web curve to form a breathtaking smooth graph
-          const weight = diurnalWeights[h];
-          const pv = Math.round(totalPvs * weight);
-          const vis = Math.round(totalVis * weight);
-          fullHours.push({
-            date: hourStr,
-            pageviews: Math.max(1, pv),
-            visitors: Math.max(1, vis),
-            sessions: Math.max(1, Math.round(vis * 1.04)),
-          });
-        } else {
-          fullHours.push({
-            date: hourStr,
-            pageviews: 0,
-            visitors: 0,
-            sessions: 0,
-          });
-        }
+        const existing = hourMap.get(hourStr);
+        fullHours.push({
+          date: hourStr,
+          pageviews: existing ? Number(existing.pageviews) : 0,
+          visitors: existing ? Number(existing.visitors) : 0,
+          sessions: existing ? Number(existing.sessions) : 0,
+        });
       }
 
       this.setInCache(cacheKey, fullHours, 30000); // 30 seconds TTL
@@ -865,47 +798,9 @@ export class AnalyticsService {
       `),
     ]);
 
-    let countryRows = countries.rows as any[];
-    let cityRows = cities.rows as any[];
-
-    if (countryRows.length === 0 || cityRows.length === 0) {
-      const [site] = await db
-        .select({ domain: websites.domain })
-        .from(websites)
-        .where(eq(websites.id, filter.websiteId))
-        .limit(1);
-      const cleanDomain = site?.domain ? getCleanDomain(site.domain) : "";
-      const fallback = cleanDomain ? getBaselineStats(cleanDomain) : null;
-      if (fallback) {
-        const total = fallback.visitorsToday || 12000;
-        if (countryRows.length === 0) {
-          countryRows = [
-            { country: "Türkiye", country_code: "TR", visitors: 4892, pageviews: 8120 },
-            { country: "Uzbekistan", country_code: "UZ", visitors: 2650, pageviews: 4320 },
-            { country: "Tajikistan", country_code: "TJ", visitors: 1240, pageviews: 1980 },
-            { country: "Kyrgyzstan", country_code: "KG", visitors: 1150, pageviews: 1840 },
-            { country: "Hungary", country_code: "HU", visitors: 940, pageviews: 1520 },
-            { country: "Germany", country_code: "DE", visitors: 820, pageviews: 1310 },
-            { country: "United States", country_code: "US", visitors: 710, pageviews: 1140 },
-          ];
-        }
-        if (cityRows.length === 0) {
-          cityRows = [
-            { city: "Istanbul", country: "Türkiye", country_code: "TR", visitors: 1884 },
-            { city: "Tashkent", country: "Uzbekistan", country_code: "UZ", visitors: 1035 },
-            { city: "Ankara", country: "Türkiye", country_code: "TR", visitors: 495 },
-            { city: "Dushanbe", country: "Tajikistan", country_code: "TJ", visitors: 484 },
-            { city: "Bishkek", country: "Kyrgyzstan", country_code: "KG", visitors: 446 },
-            { city: "Izmir", country: "Türkiye", country_code: "TR", visitors: 420 },
-            { city: "Budapest", country: "Hungary", country_code: "HU", visitors: 362 },
-          ];
-        }
-      }
-    }
-
     const data = {
-      countries: countryRows,
-      cities: cityRows,
+      countries: countries.rows as any[],
+      cities: cities.rows as any[],
     };
     this.setInCache(cacheKey, data, 30000); // 30 seconds TTL
     return data;
@@ -1050,56 +945,33 @@ export class AnalyticsService {
       };
     });
 
-    const [site] = await db
-      .select({ domain: websites.domain })
-      .from(websites)
-      .where(eq(websites.id, filter.websiteId))
-      .limit(1);
-
-    const cleanDomain = site?.domain ? getCleanDomain(site.domain) : "";
-    const fallback = cleanDomain ? getBaselineStats(cleanDomain) : null;
-
     const totalsRow = totalsRes.rows[0] as any;
-    let totalPv = Number(totalsRow?.totalPageviews || 0);
-    let totalVis = Number(totalsRow?.totalVisitors || 0);
-    let totalNewVis = Number(totalsRow?.totalNewVisitors || 0);
+    const totalPv = Number(totalsRow?.totalPageviews || 0);
+    const totalVis = Number(totalsRow?.totalVisitors || 0);
+    const totalNewVis = Number(totalsRow?.totalNewVisitors || 0);
 
-    let finalDetailedReferrers = detailedReferrers;
-
-    if (totalPv === 0 && fallback) {
-      const fromMs = new Date(fromDate).getTime();
-      const toMs = new Date(toDate).getTime();
-      const daysCount = Math.max(1, Math.min(30, Math.round((toMs - fromMs) / (1000 * 60 * 60 * 24))));
-
-      totalVis = Math.round(fallback.visitorsToday * daysCount);
-      totalPv = Math.round(fallback.pageviewsToday * daysCount);
-      totalNewVis = Math.round(totalVis * 0.95);
-
-      if (finalDetailedReferrers.length === 0) {
-        finalDetailedReferrers = generateFallbackDetailedReferrers(totalPv, totalVis);
-      }
-    }
+    const finalDetailedReferrers = detailedReferrers;
 
     const refPageviews = finalDetailedReferrers.reduce((acc, r) => acc + r.pageviews, 0);
     const refVisitors = finalDetailedReferrers.reduce((acc, r) => acc + r.visitors, 0);
     const refNewVisitors = finalDetailedReferrers.reduce((acc, r) => acc + r.newVisitors, 0);
 
-    const totalPpv = totalVis > 0 ? Number((totalPv / totalVis).toFixed(2)) : 1.66;
-    const refPpv = refVisitors > 0 ? Number((refPageviews / refVisitors).toFixed(2)) : 1.60;
+    const totalPpv = totalVis > 0 ? Number((totalPv / totalVis).toFixed(2)) : 0;
+    const refPpv = refVisitors > 0 ? Number((refPageviews / refVisitors).toFixed(2)) : 0;
     const ppvDiffPct =
-      totalPpv > 0 ? Number((((refPpv - totalPpv) / totalPpv) * 100).toFixed(1)) : -1.2;
+      totalPpv > 0 ? Number((((refPpv - totalPpv) / totalPpv) * 100).toFixed(1)) : 0;
 
     const referrerSummary = {
       totalPageviews: totalPv,
       refPageviews,
-      pageviewsPct: totalPv > 0 ? Number(((refPageviews / totalPv) * 100).toFixed(2)) : 97.21,
+      pageviewsPct: totalPv > 0 ? Number(((refPageviews / totalPv) * 100).toFixed(2)) : 0,
       totalVisitors: totalVis,
       refVisitors,
-      visitorsPct: totalVis > 0 ? Number(((refVisitors / totalVis) * 100).toFixed(2)) : 98.53,
+      visitorsPct: totalVis > 0 ? Number(((refVisitors / totalVis) * 100).toFixed(2)) : 0,
       totalNewVisitors: totalNewVis,
       refNewVisitors,
       newVisitorsPct:
-        totalNewVis > 0 ? Number(((refNewVisitors / totalNewVis) * 100).toFixed(2)) : 98.83,
+        totalNewVis > 0 ? Number(((refNewVisitors / totalNewVis) * 100).toFixed(2)) : 0,
       totalPpv,
       refPpv,
       ppvDiffPct,
@@ -1178,27 +1050,7 @@ export class AnalyticsService {
       LIMIT ${filter.limit};
     `);
 
-    let landingRows = landing.rows as any[];
-    if (landingRows.length === 0 && !isFuture) {
-      const [site] = await db
-        .select({ domain: websites.domain })
-        .from(websites)
-        .where(eq(websites.id, filter.websiteId))
-        .limit(1);
-      const cleanDomain = site?.domain ? getCleanDomain(site.domain) : "";
-      const fallback = cleanDomain ? getBaselineStats(cleanDomain) : null;
-      if (fallback) {
-        const total = fallback.visitorsToday || 12000;
-        landingRows = [
-          { path: "/", sessions: Math.round(total * 0.42) },
-          { path: "/live", sessions: Math.round(total * 0.26) },
-          { path: "/schedule", sessions: Math.round(total * 0.15) },
-          { path: "/soccer", sessions: Math.round(total * 0.10) },
-          { path: "/nba", sessions: Math.round(total * 0.07) },
-        ];
-      }
-    }
-
+    const landingRows = landing.rows as any[];
     this.setInCache(cacheKey, landingRows, 30000); // 30 seconds TTL
     return landingRows;
   }
@@ -1228,27 +1080,7 @@ export class AnalyticsService {
       LIMIT ${filter.limit};
     `);
 
-    let exitRows = exit.rows as any[];
-    if (exitRows.length === 0 && !isFuture) {
-      const [site] = await db
-        .select({ domain: websites.domain })
-        .from(websites)
-        .where(eq(websites.id, filter.websiteId))
-        .limit(1);
-      const cleanDomain = site?.domain ? getCleanDomain(site.domain) : "";
-      const fallback = cleanDomain ? getBaselineStats(cleanDomain) : null;
-      if (fallback) {
-        const total = fallback.visitorsToday || 12000;
-        exitRows = [
-          { path: "/live", sessions: Math.round(total * 0.38) },
-          { path: "/", sessions: Math.round(total * 0.24) },
-          { path: "/schedule", sessions: Math.round(total * 0.16) },
-          { path: "/soccer", sessions: Math.round(total * 0.12) },
-          { path: "/nfl", sessions: Math.round(total * 0.10) },
-        ];
-      }
-    }
-
+    const exitRows = exit.rows as any[];
     this.setInCache(cacheKey, exitRows, 30000); // 30 seconds TTL
     return exitRows;
   }
@@ -1277,25 +1109,7 @@ export class AnalyticsService {
       ORDER BY sessions DESC;
     `);
 
-    let deviceRows = devices.rows as any[];
-    if (deviceRows.length === 0 && !isFuture) {
-      const [site] = await db
-        .select({ domain: websites.domain })
-        .from(websites)
-        .where(eq(websites.id, filter.websiteId))
-        .limit(1);
-      const cleanDomain = site?.domain ? getCleanDomain(site.domain) : "";
-      const fallback = cleanDomain ? getBaselineStats(cleanDomain) : null;
-      if (fallback) {
-        const total = fallback.visitorsToday || 12000;
-        deviceRows = [
-          { device: "desktop", sessions: Math.round(total * 0.54), visitors: Math.round(total * 0.52) },
-          { device: "mobile", sessions: Math.round(total * 0.41), visitors: Math.round(total * 0.43) },
-          { device: "tablet", sessions: Math.round(total * 0.05), visitors: Math.round(total * 0.05) },
-        ];
-      }
-    }
-
+    const deviceRows = devices.rows as any[];
     this.setInCache(cacheKey, deviceRows, 30000); // 30 seconds TTL
     return deviceRows;
   }
@@ -1325,27 +1139,7 @@ export class AnalyticsService {
       LIMIT ${filter.limit};
     `);
 
-    let browserRows = browsers.rows as any[];
-    if (browserRows.length === 0 && !isFuture) {
-      const [site] = await db
-        .select({ domain: websites.domain })
-        .from(websites)
-        .where(eq(websites.id, filter.websiteId))
-        .limit(1);
-      const cleanDomain = site?.domain ? getCleanDomain(site.domain) : "";
-      const fallback = cleanDomain ? getBaselineStats(cleanDomain) : null;
-      if (fallback) {
-        const total = fallback.visitorsToday || 12000;
-        browserRows = [
-          { browser: "Chrome", sessions: Math.round(total * 0.64), visitors: Math.round(total * 0.62) },
-          { browser: "Safari", sessions: Math.round(total * 0.18), visitors: Math.round(total * 0.19) },
-          { browser: "Edge", sessions: Math.round(total * 0.09), visitors: Math.round(total * 0.09) },
-          { browser: "Firefox", sessions: Math.round(total * 0.06), visitors: Math.round(total * 0.07) },
-          { browser: "Opera", sessions: Math.round(total * 0.03), visitors: Math.round(total * 0.03) },
-        ];
-      }
-    }
-
+    const browserRows = browsers.rows as any[];
     this.setInCache(cacheKey, browserRows, 30000); // 30 seconds TTL
     return browserRows;
   }
@@ -1375,27 +1169,7 @@ export class AnalyticsService {
       LIMIT ${filter.limit};
     `);
 
-    let osRows = os.rows as any[];
-    if (osRows.length === 0 && !isFuture) {
-      const [site] = await db
-        .select({ domain: websites.domain })
-        .from(websites)
-        .where(eq(websites.id, filter.websiteId))
-        .limit(1);
-      const cleanDomain = site?.domain ? getCleanDomain(site.domain) : "";
-      const fallback = cleanDomain ? getBaselineStats(cleanDomain) : null;
-      if (fallback) {
-        const total = fallback.visitorsToday || 12000;
-        osRows = [
-          { os: "Windows", sessions: Math.round(total * 0.48), visitors: Math.round(total * 0.46) },
-          { os: "Android", sessions: Math.round(total * 0.28), visitors: Math.round(total * 0.27) },
-          { os: "iOS", sessions: Math.round(total * 0.14), visitors: Math.round(total * 0.14) },
-          { os: "macOS", sessions: Math.round(total * 0.07), visitors: Math.round(total * 0.07) },
-          { os: "Linux", sessions: Math.round(total * 0.03), visitors: Math.round(total * 0.03) },
-        ];
-      }
-    }
-
+    const osRows = os.rows as any[];
     this.setInCache(cacheKey, osRows, 30000); // 30 seconds TTL
     return osRows;
   }
@@ -1424,7 +1198,7 @@ export class AnalyticsService {
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
-    // Check website fallback baseline & timezone
+    // Check website timezone
     const [site] = await db
       .select({
         domain: websites.domain,
@@ -1436,8 +1210,6 @@ export class AnalyticsService {
       .limit(1);
 
     const targetTimezone = site?.timezone || "Asia/Dhaka";
-    const cleanDomain = site?.domain ? getCleanDomain(site.domain) : "";
-    const fallback = cleanDomain ? getBaselineStats(cleanDomain) : null;
 
     // High-performance parallel execution with optimized CTE for bounce sessions
     const [hourlyPvRes, hourlyNewVisRes, hourlyBounceRes] = await Promise.all([
@@ -1530,87 +1302,21 @@ export class AnalyticsService {
       // fallback
     }
 
-    const diurnalWeights = [
-      0.015, 0.012, 0.009, 0.007, 0.009, 0.018, // 0:00 - 5:59
-      0.035, 0.052, 0.065, 0.070, 0.068, 0.065, // 6:00 - 11:59
-      0.062, 0.065, 0.070, 0.072, 0.068, 0.062, // 12:00 - 17:59
-      0.058, 0.055, 0.050, 0.040, 0.028, 0.020  // 18:00 - 23:59
-    ];
-
-    const hasRealData = totalPvs > 10;
-    let baseDayVisitors = totalVis;
-    let baseDayPageviews = totalPvs;
-
-    if (!hasRealData && fallback) {
-      baseDayVisitors = fallback.visitorsToday || 28677;
-      baseDayPageviews = fallback.pageviewsToday || Math.round(baseDayVisitors * 1.55);
-    } else if (!hasRealData && !fallback) {
-      baseDayVisitors = 28677;
-      baseDayPageviews = 44607;
-    }
-
     // Generate 24 hours (0..23)
     const hourly: any[] = [];
     let calcTotalVis = 0;
     let calcTotalPv = 0;
     let calcTotalNewVis = 0;
 
-    const maxActiveHour = isToday ? Math.max(1, currentHour) : 23;
-
     for (let h = 0; h < 24; h++) {
       const timeLabel = `${h}:00 - ${h}:59`;
-      let hVis = 0;
-      let hPv = 0;
-      let hNewVis = 0;
-      let hBounce = 0;
-
-      if (hasRealData) {
-        const row = pvMap.get(h);
-        hVis = row ? Number(row.visitors || 0) : 0;
-        hPv = row ? Number(row.pageviews || 0) : 0;
-        hNewVis = newVisMap.get(h) || Math.round(hVis * 0.95);
-        const singleSess = bounceMap.get(h) || 0;
-        const sess = row ? Number(row.sessions || 1) : 1;
-        hBounce = sess > 0 ? Number(((singleSess / sess) * 100).toFixed(1)) : 0;
-      } else {
-        // Fallback realistic synthesis
-        if (h <= maxActiveHour) {
-          if (isToday && maxActiveHour <= 2) {
-            // Authentic early-morning split: hour 0 gets ~67%, hour 1 gets ~33%
-            if (h === 0) {
-              hVis = Math.round(baseDayVisitors * 0.6724);
-              hPv = Math.round(baseDayPageviews * 0.6957);
-              hNewVis = Math.round(hVis * 0.973);
-              hBounce = 66.6;
-            } else if (h === 1) {
-              hVis = baseDayVisitors - Math.round(baseDayVisitors * 0.6724);
-              hPv = baseDayPageviews - Math.round(baseDayPageviews * 0.6957);
-              hNewVis = Math.round(hVis * 0.965);
-              hBounce = 73.9;
-            } else {
-              hVis = 0;
-              hPv = 0;
-              hNewVis = 0;
-              hBounce = 0;
-            }
-          } else {
-            const weight = diurnalWeights[h];
-            const activeWeightSum = isToday
-              ? diurnalWeights.slice(0, maxActiveHour + 1).reduce((a, b) => a + b, 0)
-              : 1;
-            const normWeight = weight / (activeWeightSum || 1);
-            hVis = Math.max(1, Math.round(baseDayVisitors * normWeight));
-            hPv = Math.max(1, Math.round(baseDayPageviews * normWeight));
-            hNewVis = Math.round(hVis * (0.94 + ((h * 7) % 5) * 0.01));
-            hBounce = Number((65 + ((h * 13) % 12)).toFixed(1));
-          }
-        } else {
-          hVis = 0;
-          hPv = 0;
-          hNewVis = 0;
-          hBounce = 0;
-        }
-      }
+      const row = pvMap.get(h);
+      const hVis = row ? Number(row.visitors || 0) : 0;
+      const hPv = row ? Number(row.pageviews || 0) : 0;
+      const hNewVis = newVisMap.get(h) || (hVis > 0 ? Math.round(hVis * 0.95) : 0);
+      const singleSess = bounceMap.get(h) || 0;
+      const sess = row ? Number(row.sessions || 0) : 0;
+      const hBounce = sess > 0 ? Number(((singleSess / sess) * 100).toFixed(1)) : 0;
 
       calcTotalVis += hVis;
       calcTotalPv += hPv;
@@ -1641,11 +1347,11 @@ export class AnalyticsService {
     }
 
     const pagesPerVisit =
-      calcTotalVis > 0 ? Number((calcTotalPv / calcTotalVis).toFixed(2)) : 1.55;
+      calcTotalVis > 0 ? Number((calcTotalPv / calcTotalVis).toFixed(2)) : 0;
     const newVisitorsRatio =
       calcTotalVis > 0
         ? Number(((calcTotalNewVis / calcTotalVis) * 100).toFixed(1))
-        : 97.0;
+        : 0;
 
     const activeHourly = hourly.filter((h) => h.visitors > 0);
     const avgBounceRate =
@@ -1656,7 +1362,7 @@ export class AnalyticsService {
               activeHourly.length
             ).toFixed(1)
           )
-        : 68.5;
+        : 0;
 
     const targetDate = fromDate;
     const formatter = new Intl.DateTimeFormat("en-US", {

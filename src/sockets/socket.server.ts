@@ -5,7 +5,6 @@ import { db } from "../db/index.js";
 import { websites } from "../db/schema/websites.js";
 import { eq, and } from "drizzle-orm";
 import { logger } from "../utils/logger.js";
-import { getBaselineStats } from "../constants/baselineStats.js";
 import { realtimeService } from "../services/realtime.service.js";
 
 let io: SocketIOServer | null = null;

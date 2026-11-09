@@ -58,16 +58,10 @@ class RealtimeService {
       this.syncFromDatabase().catch(() => {});
     }, 4000);
 
-    // Run cleanup of expired visitors (> 12m) every 10 seconds
+    // Run cleanup of expired visitors (> 10m) every 10 seconds
     setInterval(() => {
       this.cleanupStaleVisitors();
     }, 10000);
-
-    // Continuous Live Real-Time Hits Streamer: For websites with active online visitors,
-    // generates continuous real-time hits every 1.0 second, matching Histats act=18 stream perfectly
-    setInterval(() => {
-      this.streamLiveHit();
-    }, 1000);
   }
 
   public onActivity(listener: (websiteId: string) => void) {
