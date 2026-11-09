@@ -329,9 +329,6 @@ export class AnalyticsService {
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) {
       let currentActive = realtimeService.getActiveCount(websiteId);
-      if (currentActive === 0 && cached.activeCount > 0) {
-        currentActive = cached.activeCount;
-      }
       cached.activeCount = currentActive;
       cached.activeCount5m = realtimeService.getActiveCount(websiteId, 5 * 60 * 1000) || Math.floor(currentActive * 0.96);
       cached.activeCount15m = realtimeService.getActiveCount(websiteId, 15 * 60 * 1000) || Math.floor(currentActive * 0.90);

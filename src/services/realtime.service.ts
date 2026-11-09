@@ -111,15 +111,19 @@ class RealtimeService {
   }
 
   private streamLiveHit() {
+    const cutoff = Date.now() - 3 * 60 * 1000;
     for (const [websiteId, visitorsMap] of this.websitesMap.entries()) {
       if (visitorsMap.size === 0) continue;
-      const visitors = Array.from(visitorsMap.values());
-      if (visitors.length === 0) continue;
+      const activeRecent = Array.from(visitorsMap.values()).filter(
+        (v) => v.lastSeenAt >= cutoff,
+      );
+      if (activeRecent.length === 0) continue;
 
-      const randomVis = visitors[Math.floor(Math.random() * visitors.length)];
+      const randomVis =
+        activeRecent[Math.floor(Math.random() * activeRecent.length)];
       if (!randomVis) continue;
 
-      randomVis.lastSeenAt = Date.now();
+      // Do NOT artificially update lastSeenAt to Date.now() so inactive visitors naturally expire after 10 minutes
       randomVis.pageviewsCount = (randomVis.pageviewsCount || 1) + 1;
 
       const hit = {
