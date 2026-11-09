@@ -277,14 +277,14 @@ export class WebsiteService {
     const website = await this.getWebsiteById(userId, websiteId);
 
     const scriptUrl = `${env.TRACKER_DOMAIN}/tracker.js`;
-    const snippet = `<!-- Wide-Histat Analytics Tracking Code -->
+    const snippet = `<!-- Analycos Analytics Tracking Code -->
 <script
   async
   defer
   src="${scriptUrl}"
   data-website-id="${website.trackingId}"
 ></script>
-<!-- End Wide-Histat Analytics -->`;
+<!-- End Analycos Analytics -->`;
 
     return {
       trackingId: website.trackingId,
