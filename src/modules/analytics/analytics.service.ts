@@ -55,9 +55,13 @@ export class AnalyticsService {
     toDate: Date;
     cacheFrom: string;
     cacheTo: string;
+    isFuture: boolean;
   } {
     const fromDate = filter.from instanceof Date ? filter.from : new Date(filter.from || Date.now() - 30 * 86400000);
     const toDate = filter.to instanceof Date ? filter.to : new Date(filter.to || Date.now());
+
+    // Check if the requested range starts strictly in the future (after current time)
+    const isFuture = fromDate.getTime() > Date.now();
 
     // Round timestamps to 30-second buckets so repeated requests in the same time frame hit memory cache in 0ms
     const BUCKET_MS = 30000;
@@ -69,6 +73,7 @@ export class AnalyticsService {
       toDate,
       cacheFrom: new Date(bucketedFrom).toISOString(),
       cacheTo: new Date(bucketedTo).toISOString(),
+      isFuture,
     };
   }
 
@@ -133,7 +138,28 @@ export class AnalyticsService {
     const website = await this.verifyAccess(filter.websiteId, userId);
     filter.websiteId = website.id;
 
-    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
+
+    if (isFuture) {
+      return {
+        activeVisitors: 0,
+        totalPageviews: 0,
+        uniqueVisitors: 0,
+        totalSessions: 0,
+        allTimeVisitors: 0,
+        allTimePageviews: 0,
+        allTimeSessions: 0,
+        firstTimeVisitors: 0,
+        returningVisitors: 0,
+        newVisitorsPct: 0,
+        returningVisitorsPct: 0,
+        pagesPerSession: 0,
+        bounceRate: 0,
+        avgDuration: 0,
+        from: fromDate.toISOString(),
+        to: toDate.toISOString(),
+      };
+    }
 
     const cacheKey = `overview:${filter.websiteId}:${cacheFrom}:${cacheTo}`;
     const cached = this.getFromCache<any>(cacheKey);
@@ -649,7 +675,9 @@ export class AnalyticsService {
     const website = await this.verifyAccess(filter.websiteId, userId);
     filter.websiteId = website.id;
 
-    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
+    if (isFuture) return [];
+
     const cacheKey = `timeseries:${filter.websiteId}:${cacheFrom}:${cacheTo}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
@@ -799,7 +827,9 @@ export class AnalyticsService {
     const website = await this.verifyAccess(filter.websiteId, userId);
     filter.websiteId = website.id;
 
-    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
+    if (isFuture) return { countries: [], cities: [] };
+
     const cacheKey = `geo:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
@@ -896,7 +926,19 @@ export class AnalyticsService {
     const website = await this.verifyAccess(filter.websiteId, userId);
     filter.websiteId = website.id;
 
-    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
+    if (isFuture) {
+      return {
+        summary: [],
+        categories: [],
+        campaigns: [],
+        directCount: 0,
+        referralCount: 0,
+        searchCount: 0,
+        socialCount: 0,
+      };
+    }
+
     const cacheKey = `sources:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
@@ -1088,7 +1130,9 @@ export class AnalyticsService {
     const website = await this.verifyAccess(filter.websiteId, userId);
     filter.websiteId = website.id;
 
-    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
+    if (isFuture) return [];
+
     const cacheKey = `pages:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
@@ -1116,7 +1160,9 @@ export class AnalyticsService {
     const website = await this.verifyAccess(filter.websiteId, userId);
     filter.websiteId = website.id;
 
-    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
+    if (isFuture) return [];
+
     const cacheKey = `landing:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
@@ -1136,7 +1182,7 @@ export class AnalyticsService {
     `);
 
     let landingRows = landing.rows as any[];
-    if (landingRows.length === 0) {
+    if (landingRows.length === 0 && !isFuture) {
       const [site] = await db
         .select({ domain: websites.domain })
         .from(websites)
@@ -1164,7 +1210,9 @@ export class AnalyticsService {
     const website = await this.verifyAccess(filter.websiteId, userId);
     filter.websiteId = website.id;
 
-    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
+    if (isFuture) return [];
+
     const cacheKey = `exit:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
@@ -1184,7 +1232,7 @@ export class AnalyticsService {
     `);
 
     let exitRows = exit.rows as any[];
-    if (exitRows.length === 0) {
+    if (exitRows.length === 0 && !isFuture) {
       const [site] = await db
         .select({ domain: websites.domain })
         .from(websites)
@@ -1212,7 +1260,9 @@ export class AnalyticsService {
     const website = await this.verifyAccess(filter.websiteId, userId);
     filter.websiteId = website.id;
 
-    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
+    if (isFuture) return [];
+
     const cacheKey = `devices:${filter.websiteId}:${cacheFrom}:${cacheTo}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
@@ -1231,7 +1281,7 @@ export class AnalyticsService {
     `);
 
     let deviceRows = devices.rows as any[];
-    if (deviceRows.length === 0) {
+    if (deviceRows.length === 0 && !isFuture) {
       const [site] = await db
         .select({ domain: websites.domain })
         .from(websites)
@@ -1257,7 +1307,9 @@ export class AnalyticsService {
     const website = await this.verifyAccess(filter.websiteId, userId);
     filter.websiteId = website.id;
 
-    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
+    if (isFuture) return [];
+
     const cacheKey = `browsers:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
@@ -1277,7 +1329,7 @@ export class AnalyticsService {
     `);
 
     let browserRows = browsers.rows as any[];
-    if (browserRows.length === 0) {
+    if (browserRows.length === 0 && !isFuture) {
       const [site] = await db
         .select({ domain: websites.domain })
         .from(websites)
@@ -1305,7 +1357,9 @@ export class AnalyticsService {
     const website = await this.verifyAccess(filter.websiteId, userId);
     filter.websiteId = website.id;
 
-    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
+    if (isFuture) return [];
+
     const cacheKey = `os:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
@@ -1325,7 +1379,7 @@ export class AnalyticsService {
     `);
 
     let osRows = os.rows as any[];
-    if (osRows.length === 0) {
+    if (osRows.length === 0 && !isFuture) {
       const [site] = await db
         .select({ domain: websites.domain })
         .from(websites)
@@ -1353,7 +1407,22 @@ export class AnalyticsService {
     const website = await this.verifyAccess(filter.websiteId, userId);
     filter.websiteId = website.id;
 
-    const { fromDate, toDate, cacheFrom, cacheTo } = this.parseDates(filter);
+    const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
+    if (isFuture) {
+      return {
+        date: fromDate.toISOString(),
+        dateFormatted: fromDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+        dateFull: fromDate.toDateString(),
+        totalPageviews: 0,
+        totalVisitors: 0,
+        firstTimeVisitors: 0,
+        pagesPerVisit: 0,
+        newVisitorsRatio: 0,
+        avgBounceRate: 0,
+        hourly: [],
+      };
+    }
+
     const cacheKey = `traffic_stats:${filter.websiteId}:${cacheFrom}:${cacheTo}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
