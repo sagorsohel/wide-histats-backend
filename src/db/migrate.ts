@@ -173,6 +173,24 @@ export const runMigrations = async () => {
       CREATE INDEX IF NOT EXISTS daily_stats_website_idx ON daily_stats (website_id);
     `);
 
+    // Website Counters table (Custom hit counters & badges per website)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS counters (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        website_id UUID NOT NULL REFERENCES websites(id) ON DELETE CASCADE,
+        counter_id TEXT NOT NULL,
+        name TEXT DEFAULT 'Standard counter' NOT NULL,
+        style TEXT DEFAULT 'hidden' NOT NULL,
+        is_hidden BOOLEAN DEFAULT TRUE NOT NULL,
+        is_main BOOLEAN DEFAULT FALSE NOT NULL,
+        display_options JSONB DEFAULT '{"visitorsToday":true}'::jsonb NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS counter_website_idx ON counters (website_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS counter_unique_code_idx ON counters (website_id, counter_id);
+    `);
+
     await client.query("COMMIT");
     logger.info("Database schema migration completed successfully.");
   } catch (err: any) {

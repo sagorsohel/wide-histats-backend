@@ -7,3 +7,4 @@ export * from "./pageviews.js";
 export * from "./visitor-locations.js";
 export * from "./daily-stats.js";
 export * from "./events.js";
+export * from "./counters.js";

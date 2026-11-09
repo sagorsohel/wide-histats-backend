@@ -45,4 +45,22 @@ router.get(
   WebsiteController.getTrackingCode
 );
 
+// Counter management routes for website
+router.get(
+  "/:id/counters",
+  validateRequest({ params: websiteIdParamSchema }),
+  WebsiteController.getCounters
+);
+
+router.post(
+  "/:id/counters",
+  validateRequest({ params: websiteIdParamSchema }),
+  WebsiteController.createCounter
+);
+
+router.delete(
+  "/:id/counters/:counterId",
+  WebsiteController.deleteCounter
+);
+
 export default router;

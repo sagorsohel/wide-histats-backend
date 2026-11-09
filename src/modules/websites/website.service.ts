@@ -4,6 +4,7 @@ import { db } from "../../db/index.js";
 import { websites } from "../../db/schema/websites.js";
 import { visitors } from "../../db/schema/visitors.js";
 import { pageviews } from "../../db/schema/pageviews.js";
+import { counters } from "../../db/schema/counters.js";
 import { CreateWebsiteInput, UpdateWebsiteInput } from "./website.schema.js";
 import { env } from "../../config/env.js";
 import { realtimeService } from "../../services/realtime.service.js";
@@ -52,6 +53,25 @@ export class WebsiteService {
         country: input.country || "Bangladesh",
       })
       .returning();
+
+    // Automatically create the initial default standard counter (Hidden)
+    try {
+      await db.insert(counters).values({
+        websiteId: website.id,
+        counterId: trackingId,
+        name: "Standard counter",
+        style: "hidden",
+        isHidden: true,
+        isMain: true,
+        displayOptions: {
+          visitorsToday: true,
+          totalVisitors: false,
+          pageviewsToday: false,
+          totalPageviews: false,
+          usersOnline: false,
+        },
+      });
+    } catch {}
 
     return {
       ...website,
@@ -271,5 +291,92 @@ export class WebsiteService {
       scriptUrl,
       snippet,
     };
+  }
+
+  static async getCounters(userId: string, websiteId: string) {
+    const website = await this.getWebsiteById(userId, websiteId);
+
+    let siteCounters = await db
+      .select()
+      .from(counters)
+      .where(eq(counters.websiteId, website.id))
+      .orderBy(counters.createdAt);
+
+    // If website has no counter yet (e.g. existing site created earlier), auto create default standard counter
+    if (siteCounters.length === 0) {
+      try {
+        const [mainCounter] = await db
+          .insert(counters)
+          .values({
+            websiteId: website.id,
+            counterId: website.trackingId,
+            name: "Standard counter",
+            style: "hidden",
+            isHidden: true,
+            isMain: true,
+            displayOptions: {
+              visitorsToday: true,
+              totalVisitors: false,
+              pageviewsToday: false,
+              totalPageviews: false,
+              usersOnline: false,
+            },
+          })
+          .returning();
+        siteCounters = [mainCounter];
+      } catch {}
+    }
+
+    return siteCounters;
+  }
+
+  static async createCounter(
+    userId: string,
+    websiteId: string,
+    input: {
+      name?: string;
+      style?: string;
+      isHidden?: boolean;
+      displayOptions?: any;
+    }
+  ) {
+    const website = await this.getWebsiteById(userId, websiteId);
+    const counterId = await this.generateUnique7DigitId();
+
+    const isHidden = input.style === "hidden" || input.isHidden === true;
+
+    const [newCounter] = await db
+      .insert(counters)
+      .values({
+        websiteId: website.id,
+        counterId,
+        name: input.name || `Counter ${counterId}`,
+        style: input.style || "cloud",
+        isHidden,
+        isMain: false,
+        displayOptions: input.displayOptions || { visitorsToday: true },
+      })
+      .returning();
+
+    return newCounter;
+  }
+
+  static async deleteCounter(
+    userId: string,
+    websiteId: string,
+    counterId: string
+  ) {
+    const website = await this.getWebsiteById(userId, websiteId);
+
+    await db
+      .delete(counters)
+      .where(
+        and(
+          eq(counters.websiteId, website.id),
+          or(eq(counters.id, counterId), eq(counters.counterId, counterId))
+        )
+      );
+
+    return { message: "Counter removed successfully" };
   }
 }

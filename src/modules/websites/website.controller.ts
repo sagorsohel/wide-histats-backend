@@ -73,4 +73,43 @@ export class WebsiteController {
       next(error);
     }
   }
+
+  static async getCounters(req: Request, res: Response, next: NextFunction) {
+    try {
+      const websiteId = req.params.id as string;
+      const list = await WebsiteService.getCounters(req.user!.userId, websiteId);
+      return ApiResponse.success(res, list);
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
+  static async createCounter(req: Request, res: Response, next: NextFunction) {
+    try {
+      const websiteId = req.params.id as string;
+      const created = await WebsiteService.createCounter(
+        req.user!.userId,
+        websiteId,
+        req.body
+      );
+      return ApiResponse.success(res, created, "Counter created successfully", 201);
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
+  static async deleteCounter(req: Request, res: Response, next: NextFunction) {
+    try {
+      const websiteId = req.params.id as string;
+      const counterId = req.params.counterId as string;
+      const result = await WebsiteService.deleteCounter(
+        req.user!.userId,
+        websiteId,
+        counterId
+      );
+      return ApiResponse.success(res, result, "Counter deleted successfully");
+    } catch (error: any) {
+      next(error);
+    }
+  }
 }
