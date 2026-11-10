@@ -1002,7 +1002,8 @@ export class AnalyticsService {
     const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
     if (isFuture) return [];
 
-    const cacheKey = `pages:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
+    const pageLimit = filter.limit && filter.limit > 0 ? filter.limit : 50000;
+    const cacheKey = `pages:${filter.websiteId}:${cacheFrom}:${cacheTo}:${pageLimit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
@@ -1018,7 +1019,7 @@ export class AnalyticsService {
         AND viewed_at <= ${toDate}
       GROUP BY page_path
       ORDER BY pageviews DESC
-      LIMIT ${filter.limit};
+      LIMIT ${pageLimit};
     `);
 
     this.setInCache(cacheKey, pages.rows, 30000); // 30 seconds TTL
@@ -1032,7 +1033,8 @@ export class AnalyticsService {
     const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
     if (isFuture) return [];
 
-    const cacheKey = `landing:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
+    const landingLimit = filter.limit && filter.limit > 0 ? filter.limit : 50000;
+    const cacheKey = `landing:${filter.websiteId}:${cacheFrom}:${cacheTo}:${landingLimit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
@@ -1047,7 +1049,7 @@ export class AnalyticsService {
         AND landing_page IS NOT NULL
       GROUP BY landing_page
       ORDER BY sessions DESC
-      LIMIT ${filter.limit};
+      LIMIT ${landingLimit};
     `);
 
     const landingRows = landing.rows as any[];
@@ -1062,7 +1064,8 @@ export class AnalyticsService {
     const { fromDate, toDate, cacheFrom, cacheTo, isFuture } = this.parseDates(filter);
     if (isFuture) return [];
 
-    const cacheKey = `exit:${filter.websiteId}:${cacheFrom}:${cacheTo}:${filter.limit}`;
+    const exitLimit = filter.limit && filter.limit > 0 ? filter.limit : 50000;
+    const cacheKey = `exit:${filter.websiteId}:${cacheFrom}:${cacheTo}:${exitLimit}`;
     const cached = this.getFromCache<any>(cacheKey);
     if (cached) return cached;
 
@@ -1077,7 +1080,7 @@ export class AnalyticsService {
         AND exit_page IS NOT NULL
       GROUP BY exit_page
       ORDER BY sessions DESC
-      LIMIT ${filter.limit};
+      LIMIT ${exitLimit};
     `);
 
     const exitRows = exit.rows as any[];
