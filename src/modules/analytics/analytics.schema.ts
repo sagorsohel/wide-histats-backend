@@ -10,7 +10,7 @@ export const analyticsFilterSchema = z.object({
     .string()
     .optional()
     .transform((val) => (val ? new Date(val) : new Date())),
-  limit: z.coerce.number().min(1).max(100000).default(50),
+  limit: z.coerce.number().min(1).max(100000).default(10000),
   page: z.coerce.number().min(1).default(1),
 });
 
