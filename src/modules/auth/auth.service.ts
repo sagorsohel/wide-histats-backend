@@ -219,4 +219,71 @@ export class AuthService {
 
     return user;
   }
+
+  static async updateProfile(userId: string, data: { name?: string }) {
+    if (!data.name || !data.name.trim()) {
+      throw new Error("Name cannot be empty.");
+    }
+
+    const [updated] = await db
+      .update(users)
+      .set({
+        name: data.name.trim(),
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId))
+      .returning({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        createdAt: users.createdAt,
+      });
+
+    if (!updated) {
+      throw new Error("User not found.");
+    }
+
+    return updated;
+  }
+
+  static async changePassword(
+    userId: string,
+    data: { currentPassword?: string; newPassword?: string }
+  ) {
+    if (!data.currentPassword || !data.newPassword) {
+      throw new Error("Current password and new password are required.");
+    }
+    if (data.newPassword.length < 6) {
+      throw new Error("New password must be at least 6 characters.");
+    }
+
+    const [user] = await db
+      .select({
+        id: users.id,
+        passwordHash: users.passwordHash,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!user) {
+      throw new Error("User not found.");
+    }
+
+    const isMatch = await comparePassword(data.currentPassword, user.passwordHash);
+    if (!isMatch) {
+      throw new Error("Current password is incorrect.");
+    }
+
+    const newHash = await hashPassword(data.newPassword);
+    await db
+      .update(users)
+      .set({
+        passwordHash: newHash,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId));
+
+    return { message: "Password changed successfully." };
+  }
 }

@@ -89,4 +89,33 @@ export class AuthController {
       next(error);
     }
   }
+
+  static async updateProfile(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return ApiResponse.error(res, "Unauthorized", 401);
+      }
+      const updated = await AuthService.updateProfile(req.user.userId, {
+        name: req.body?.name,
+      });
+      return ApiResponse.success(res, updated, "Profile updated successfully");
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
+  static async changePassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return ApiResponse.error(res, "Unauthorized", 401);
+      }
+      const result = await AuthService.changePassword(req.user.userId, {
+        currentPassword: req.body?.currentPassword,
+        newPassword: req.body?.newPassword,
+      });
+      return ApiResponse.success(res, null, result.message);
+    } catch (error: any) {
+      next(error);
+    }
+  }
 }
