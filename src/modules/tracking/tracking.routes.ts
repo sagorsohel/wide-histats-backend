@@ -10,24 +10,21 @@ import { trackingRateLimiter } from "../../middleware/rate-limit.middleware.js";
 
 const router = Router();
 
-// Tracking endpoints are public and CORS-enabled for customer websites
+// Tracking endpoints are public and CORS-enabled for customer websites (high-throughput, zero-throttling)
 router.post(
   "/pageview",
-  trackingRateLimiter,
   validateRequest({ body: trackPageViewSchema }),
   TrackingController.pageView
 );
 
 router.post(
   "/heartbeat",
-  trackingRateLimiter,
   validateRequest({ body: trackHeartbeatSchema }),
   TrackingController.heartbeat
 );
 
 router.post(
   "/event",
-  trackingRateLimiter,
   validateRequest({ body: trackEventSchema }),
   TrackingController.customEvent
 );

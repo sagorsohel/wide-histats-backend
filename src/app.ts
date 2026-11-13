@@ -16,8 +16,8 @@ import { ApiResponse } from "./utils/api-response.js";
 export const createApp = (): Express => {
   const app = express();
 
-  // Trust reverse proxy headers (Cloudflare, tunnels, load balancers - 1 hop)
-  app.set("trust proxy", 1);
+  // Trust reverse proxy headers (Cloudflare, Nginx, load balancers)
+  app.set("trust proxy", true);
 
   // Security headers (relaxed for public tracker embed and beacons)
   app.use(
