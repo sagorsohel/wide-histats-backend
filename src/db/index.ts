@@ -9,9 +9,9 @@ const { Pool } = pg;
 
 export const pool = new Pool({
   connectionString: env.DATABASE_URL,
-  max: 15,
+  max: 50, // High-concurrency connection pool for 3,000+ real-time concurrent visitors
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000,
   ssl: {
