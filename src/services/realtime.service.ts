@@ -39,9 +39,9 @@ class RealtimeService {
   private websitesMap = new Map<string, Map<string, ActiveVisitor>>();
   // Rolling buffer of recent hits for each website (last 80 hits)
   private recentHitsMap = new Map<string, any[]>();
-  // Histats standard active online window: 12 minutes (keep 20m in buffer for 15m stats)
-  public readonly DEFAULT_ONLINE_WINDOW_MS = 12 * 60 * 1000;
-  public readonly MAX_CACHE_WINDOW_MS = 20 * 60 * 1000;
+  // Histats standard active online window: 15 minutes (keep 25m in buffer)
+  public readonly DEFAULT_ONLINE_WINDOW_MS = 15 * 60 * 1000;
+  public readonly MAX_CACHE_WINDOW_MS = 25 * 60 * 1000;
   private isSyncing = false;
   private listeners: ((websiteId: string) => void)[] = [];
   private hitListeners: ((websiteId: string, hit: any) => void)[] = [];
@@ -177,7 +177,7 @@ class RealtimeService {
             ORDER BY viewed_at DESC 
             LIMIT 1
           ) pv ON true
-          WHERE s.last_seen_at >= now() - interval '20 minutes'
+          WHERE s.last_seen_at >= now() - interval '25 minutes'
             AND s.website_id = ${websiteId}
           ORDER BY s.visitor_id, s.last_seen_at DESC
         `
@@ -209,7 +209,7 @@ class RealtimeService {
             ORDER BY viewed_at DESC 
             LIMIT 1
           ) pv ON true
-          WHERE s.last_seen_at >= now() - interval '20 minutes'
+          WHERE s.last_seen_at >= now() - interval '25 minutes'
           ORDER BY s.website_id, s.visitor_id, s.last_seen_at DESC
         `;
 

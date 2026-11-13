@@ -299,7 +299,7 @@ export class AnalyticsService {
       let currentActive = realtimeService.getActiveCount(websiteId);
       cached.activeCount = currentActive;
       cached.activeCount5m = realtimeService.getActiveCount(websiteId, 5 * 60 * 1000) || Math.floor(currentActive * 0.96);
-      cached.activeCount15m = realtimeService.getActiveCount(websiteId, 15 * 60 * 1000) || Math.floor(currentActive * 0.90);
+      cached.activeCount15m = currentActive;
       cached.activeVisitors = realtimeService.getActiveVisitors(websiteId);
 
       // Keep cached topPages strictly aligned with currentActive online users
