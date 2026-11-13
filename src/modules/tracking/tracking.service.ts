@@ -37,15 +37,34 @@ export class TrackingService {
       return cached;
     }
 
-    const [website] = await db
-      .select({
-        id: websites.id,
-        status: websites.status,
-        domain: websites.domain,
-      })
-      .from(websites)
-      .where(eq(websites.trackingId, trackingId))
-      .limit(1);
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trackingId);
+    let website: any = null;
+
+    if (isUuid) {
+      const [site] = await db
+        .select({
+          id: websites.id,
+          status: websites.status,
+          domain: websites.domain,
+        })
+        .from(websites)
+        .where(eq(websites.id, trackingId))
+        .limit(1);
+      website = site;
+    }
+
+    if (!website) {
+      const [site] = await db
+        .select({
+          id: websites.id,
+          status: websites.status,
+          domain: websites.domain,
+        })
+        .from(websites)
+        .where(eq(websites.trackingId, trackingId))
+        .limit(1);
+      website = site;
+    }
 
     if (website) {
       this.websiteCache.set(trackingId, {

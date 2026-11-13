@@ -32,4 +32,7 @@ router.post(
   TrackingController.customEvent
 );
 
+// Histats 0.gif transparent tracking pixel beacon (for ad-blocker & noscript coverage)
+router.get("/0.gif", TrackingController.pixelBeacon);
+
 export default router;

@@ -8,6 +8,8 @@ import authRoutes from "./modules/auth/auth.routes.js";
 import websiteRoutes from "./modules/websites/website.routes.js";
 import trackingRoutes from "./modules/tracking/tracking.routes.js";
 import analyticsRoutes from "./modules/analytics/analytics.routes.js";
+import { TrackingController } from "./modules/tracking/tracking.controller.js";
+import { AnalyticsController } from "./modules/analytics/analytics.controller.js";
 import { notFoundHandler, errorHandler } from "./middleware/error.middleware.js";
 import { ApiResponse } from "./utils/api-response.js";
 
@@ -60,6 +62,12 @@ export const createApp = (): Express => {
   app.get("/tracker.js", (req: Request, res: Response) => {
     res.sendFile(path.join(publicDir, "tracker.js"));
   });
+
+  // Histats 0.gif transparent pixel beacon (for noscript / ad-blocker fallback)
+  app.get("/0.gif", TrackingController.pixelBeacon);
+
+  // Histats-compatible livearray endpoint
+  app.get("/livearray", AnalyticsController.livearray);
 
   // Health check endpoint
   app.get("/health", (req: Request, res: Response) => {

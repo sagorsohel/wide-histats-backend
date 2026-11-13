@@ -149,4 +149,22 @@ export class AnalyticsController {
       next(error);
     }
   }
+
+  static async livearray(req: Request, res: Response, next: NextFunction) {
+    try {
+      const rawQuery = req.query as Record<string, any>;
+      const rawKeys = Object.keys(rawQuery);
+      let websiteId = (rawQuery.websiteId || rawQuery.siteId || "").toString().trim();
+      if (!websiteId && rawKeys.length > 0) {
+        websiteId = rawKeys[0].trim();
+      }
+      const data = await AnalyticsService.getLiveArray(websiteId);
+      if (!data) {
+        return res.status(404).json({ error: "Website not found or inactive" });
+      }
+      return res.json(data);
+    } catch (error: any) {
+      next(error);
+    }
+  }
 }

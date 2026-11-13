@@ -1397,4 +1397,137 @@ export class AnalyticsService {
     this.setInCache(cacheKey, trafficData, 30000); // 30 seconds TTL
     return trafficData;
   }
+
+  /**
+   * Histats-compatible livearray payload.
+   * Returns exact schema matching Histats livearray API response.
+   */
+  static async getLiveArray(websiteIdOrTrackingId: string) {
+    if (!websiteIdOrTrackingId) return null;
+
+    const trimmed = websiteIdOrTrackingId.trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed);
+    let website: any = null;
+
+    if (isUuid) {
+      const [site] = await db
+        .select({ id: websites.id, trackingId: websites.trackingId })
+        .from(websites)
+        .where(eq(websites.id, trimmed))
+        .limit(1);
+      website = site;
+    }
+    if (!website) {
+      const [site] = await db
+        .select({ id: websites.id, trackingId: websites.trackingId })
+        .from(websites)
+        .where(eq(websites.trackingId, trimmed))
+        .limit(1);
+      website = site;
+    }
+
+    if (!website) {
+      return null;
+    }
+
+    const websiteId = website.id;
+    const now = new Date();
+    const curTimeSec = Math.floor(now.getTime() / 1000);
+    const curHour = now.getHours();
+    const curDay = now.getDate();
+    const todayDateStr = now.toISOString().slice(0, 10);
+
+    const onlineCount = realtimeService.getActiveCount(websiteId);
+
+    const [totalsRes, hourlyRes, lastHitRes] = await Promise.all([
+      db.execute(sql`
+        SELECT 
+          count(distinct case when pv.viewed_at >= date_trunc('day', now()) then pv.visitor_id end)::int as "tod_v",
+          count(case when pv.viewed_at >= date_trunc('day', now()) then 1 end)::int as "tod_h",
+          count(distinct case when pv.viewed_at >= date_trunc('day', now()) and v.first_seen_at >= date_trunc('day', now()) then pv.visitor_id end)::int as "tod_nv",
+          count(distinct case when pv.viewed_at >= date_trunc('day', now()) then pv.session_id end)::int as "tod_ub",
+          count(distinct pv.visitor_id)::int as "tot_v",
+          count(*)::int as "tot_h"
+        FROM page_views pv
+        JOIN visitors v ON v.id = pv.visitor_id
+        WHERE pv.website_id = ${websiteId}
+      `),
+      db.execute(sql`
+        SELECT 
+          count(distinct pv.visitor_id)::int as "v",
+          count(*)::int as "h",
+          count(distinct case when v.first_seen_at >= date_trunc('hour', now()) then pv.visitor_id end)::int as "nv",
+          count(distinct pv.session_id)::int as "ub"
+        FROM page_views pv
+        JOIN visitors v ON v.id = pv.visitor_id
+        WHERE pv.website_id = ${websiteId}
+          AND pv.viewed_at >= date_trunc('hour', now())
+      `),
+      db.execute(sql`
+        SELECT extract(epoch from max(viewed_at))::int as last_hit
+        FROM page_views
+        WHERE website_id = ${websiteId}
+      `),
+    ]);
+
+    const t = (totalsRes.rows[0] as any) || {};
+    const h = (hourlyRes.rows[0] as any) || {};
+    const lastHit = Number((lastHitRes.rows[0] as any)?.last_hit) || curTimeSec;
+
+    const tod_h = Number(t.tod_h) || 0;
+    const tod_v = Number(t.tod_v) || 0;
+    const tod_nv = Number(t.tod_nv) || 0;
+    const tod_ub = Number(t.tod_ub) || 0;
+    const tot_h = Number(t.tot_h) || tod_h;
+    const tot_v = Number(t.tot_v) || tod_v;
+
+    const hourH = Number(h.h) || 0;
+    const hourV = Number(h.v) || 0;
+    const hourNv = Number(h.nv) || 0;
+    const hourUb = Number(h.ub) || 0;
+
+    return {
+      livearray: {
+        cur_time: curTimeSec,
+        site_last_hits: lastHit,
+        schema_version: 2,
+        daily_status: "current",
+        daily_date: todayDateStr,
+        online: {
+          status: "available",
+          as_of: curTimeSec,
+          window_seconds: 600,
+          bucket_seconds: 60,
+          method: "session_estimate",
+          count: onlineCount,
+        },
+        livesummary: {
+          tot_h: tot_h,
+          tot_v: tot_v,
+          tod_h: tod_h,
+          tod_v: tod_v,
+          tod_nv: tod_nv,
+          tod_ub: tod_ub,
+          tod_tub: Math.round(tod_ub * 0.66),
+          tod_fvis: 0,
+          tod_fhits: 0,
+          cur_day: curDay,
+          cur_hour: curHour,
+          cur_online: onlineCount,
+          cur_l20k: 0,
+          hourly: {
+            [String(curHour)]: {
+              h: hourH,
+              v: hourV,
+              nv: hourNv,
+              ub: hourUb,
+              tub: Math.round(hourUb * 0.68),
+              p: 0,
+              a: 0,
+            },
+          },
+        },
+      },
+    };
+  }
 }

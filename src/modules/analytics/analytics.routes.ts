@@ -84,4 +84,7 @@ router.get(
   AnalyticsController.traffic
 );
 
+// Histats-compatible livearray payload endpoint
+router.get("/livearray", AnalyticsController.livearray);
+
 export default router;
