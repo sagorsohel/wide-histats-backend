@@ -39,9 +39,9 @@ class RealtimeService {
   private websitesMap = new Map<string, Map<string, ActiveVisitor>>();
   // Rolling buffer of recent hits for each website (last 80 hits)
   private recentHitsMap = new Map<string, any[]>();
-  // Histats standard active online window: 15 minutes (keep 25m in buffer)
-  public readonly DEFAULT_ONLINE_WINDOW_MS = 15 * 60 * 1000;
-  public readonly MAX_CACHE_WINDOW_MS = 25 * 60 * 1000;
+  // Histats standard active online window: 22 minutes (keep 35m in buffer)
+  public readonly DEFAULT_ONLINE_WINDOW_MS = 22 * 60 * 1000;
+  public readonly MAX_CACHE_WINDOW_MS = 35 * 60 * 1000;
   private isSyncing = false;
   private listeners: ((websiteId: string) => void)[] = [];
   private hitListeners: ((websiteId: string, hit: any) => void)[] = [];
@@ -177,7 +177,7 @@ class RealtimeService {
             ORDER BY viewed_at DESC 
             LIMIT 1
           ) pv ON true
-          WHERE s.last_seen_at >= now() - interval '25 minutes'
+          WHERE s.last_seen_at >= now() - interval '35 minutes'
             AND s.website_id = ${websiteId}
           ORDER BY s.visitor_id, s.last_seen_at DESC
         `
@@ -209,7 +209,7 @@ class RealtimeService {
             ORDER BY viewed_at DESC 
             LIMIT 1
           ) pv ON true
-          WHERE s.last_seen_at >= now() - interval '25 minutes'
+          WHERE s.last_seen_at >= now() - interval '35 minutes'
           ORDER BY s.website_id, s.visitor_id, s.last_seen_at DESC
         `;
 
@@ -276,8 +276,10 @@ class RealtimeService {
   }
 
   heartbeat(websiteId: string, visitorKey: string, currentPath?: string) {
-    const websiteVisitors = this.websitesMap.get(websiteId);
-    if (!websiteVisitors) return;
+    if (!this.websitesMap.has(websiteId)) {
+      this.websitesMap.set(websiteId, new Map());
+    }
+    const websiteVisitors = this.websitesMap.get(websiteId)!;
 
     const existing = websiteVisitors.get(visitorKey);
     if (existing) {
@@ -285,6 +287,20 @@ class RealtimeService {
       if (currentPath) {
         existing.currentPath = currentPath;
       }
+      this.notifyActivity(websiteId);
+    } else {
+      websiteVisitors.set(visitorKey, {
+        visitorKey,
+        sessionKey: "",
+        currentPath: currentPath || "/",
+        country: "Unknown",
+        countryCode: "XX",
+        deviceType: "desktop",
+        browser: "Other",
+        os: "Other",
+        source: "direct",
+        lastSeenAt: Date.now(),
+      });
       this.notifyActivity(websiteId);
     }
   }
