@@ -15,6 +15,7 @@ export interface ActiveVisitor {
   browser: string;
   os: string;
   source: string;
+  referrer?: string;
   ip?: string;
   pageviewsCount?: number;
   lastSeenAt: number; // timestamp in ms
@@ -127,7 +128,7 @@ class RealtimeService {
         path: randomVis.currentPath || "/",
         title: randomVis.pageTitle || randomVis.currentPath || "Home",
         url: randomVis.pageUrl || "",
-        referrer: randomVis.source || null,
+        referrer: randomVis.referrer || randomVis.source || null,
         viewedAt: new Date().toISOString(),
         country: randomVis.country || "United States",
         countryCode: randomVis.countryCode || "US",
@@ -163,6 +164,7 @@ class RealtimeService {
             coalesce(s.device_type, 'desktop') as "deviceType",
             coalesce(s.browser, 'Other') as browser,
             coalesce(s.os, 'Other') as os,
+            coalesce(nullif(trim(s.referrer), ''), s.source, 'direct') as referrer,
             coalesce(s.source, 'direct') as source,
             s.ip_address as ip,
             1 as "pageviewsCount",
@@ -195,6 +197,7 @@ class RealtimeService {
             coalesce(s.device_type, 'desktop') as "deviceType",
             coalesce(s.browser, 'Other') as browser,
             coalesce(s.os, 'Other') as os,
+            coalesce(nullif(trim(s.referrer), ''), s.source, 'direct') as referrer,
             coalesce(s.source, 'direct') as source,
             s.ip_address as ip,
             1 as "pageviewsCount",
@@ -241,6 +244,7 @@ class RealtimeService {
             browser: row.browser,
             os: row.os,
             source: row.source,
+            referrer: row.referrer || row.source,
             ip: row.ip || fallbackIp(row.visitorKey),
             pageviewsCount: Math.max(pageviews, existing?.pageviewsCount || 1),
             lastSeenAt: lastSeen,

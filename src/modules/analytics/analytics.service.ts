@@ -471,11 +471,8 @@ export class AnalyticsService {
         });
       }
 
-      // 2. Referrers - Normalize to clean domain so duplicate paths don't fragment counts
-      let ref = (v.source || "direct").trim();
-      if (ref !== "direct" && ref.length > 0) {
-        ref = ref.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0].trim().toLowerCase() || "direct";
-      }
+      // 2. Referrers - preserve full URL
+      let ref = (v.referrer || v.source || "direct").trim();
       referrerCountsMap.set(ref, (referrerCountsMap.get(ref) || 0) + 1);
       sourcesMap[ref] = (sourcesMap[ref] || 0) + 1;
 
@@ -850,15 +847,16 @@ export class AnalyticsService {
     const [sourcesRes, campaignsRes, totalsRes, detailedRes] = await Promise.all([
       db.execute(sql`
         SELECT 
-          source,
-          medium,
+          coalesce(nullif(trim(s.referrer), ''), s.source, 'direct') as source,
+          coalesce(nullif(trim(s.referrer), ''), s.source, 'direct') as "fullUrl",
+          s.medium,
           count(*)::int as sessions,
-          count(distinct visitor_id)::int as visitors
-        FROM sessions
-        WHERE website_id = ${filter.websiteId}
-          AND started_at >= ${fromDate}
-          AND started_at <= ${toDate}
-        GROUP BY source, medium
+          count(distinct s.visitor_id)::int as visitors
+        FROM sessions s
+        WHERE s.website_id = ${filter.websiteId}
+          AND s.started_at >= ${fromDate}
+          AND s.started_at <= ${toDate}
+        GROUP BY coalesce(nullif(trim(s.referrer), ''), s.source, 'direct'), s.medium
         ORDER BY sessions DESC
         LIMIT ${filter.limit};
       `),
@@ -899,6 +897,7 @@ export class AnalyticsService {
         )
         SELECT 
           clean_ref as "referrerUrl",
+          clean_ref as "fullUrl",
           max(s.referrer) as "sampleFullUrl",
           count(distinct s.visitor_id)::int as "visitors",
           count(distinct case when v.first_seen_at >= ${fromDate} and v.first_seen_at <= ${toDate} then s.visitor_id end)::int as "newVisitors",
@@ -915,13 +914,7 @@ export class AnalyticsService {
         FROM (
           SELECT 
             s.*,
-            regexp_replace(
-              regexp_replace(
-                coalesce(nullif(trim(s.referrer), ''), s.source, 'direct'),
-                '^https?://(www\.)?', ''
-              ),
-              '/.*$', ''
-            ) as clean_ref
+            coalesce(nullif(trim(s.referrer), ''), s.source, 'direct') as clean_ref
           FROM sessions s
           WHERE s.website_id = ${filter.websiteId}
             AND s.started_at >= ${fromDate}
@@ -946,7 +939,7 @@ export class AnalyticsService {
         rank: idx + 1,
         trend,
         referrerUrl: r.referrerUrl as string,
-        fullUrl: (r.sampleFullUrl as string) || `https://${r.referrerUrl}`,
+        fullUrl: (r.fullUrl as string) || (r.sampleFullUrl as string) || (r.referrerUrl.startsWith("http") ? r.referrerUrl : `https://${r.referrerUrl}`),
         newVisitors: Number(r.newVisitors || 0),
         visitors: Number(r.visitors || 0),
         pageviews: Number(r.pageviews || 0),
@@ -991,7 +984,7 @@ export class AnalyticsService {
 
     // Backward compatible referrers list
     const legacyReferrers = finalDetailedReferrers.map((r) => ({
-      referrer: r.referrerUrl,
+      referrer: r.fullUrl || r.referrerUrl,
       count: r.pageviews,
     }));
 

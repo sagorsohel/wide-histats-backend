@@ -299,6 +299,7 @@ export class TrackingService {
       browser: device.browser,
       os: device.os,
       source: attribution.source,
+      referrer: input.referrer || attribution.source || "direct",
       ip: ip || "127.0.0.1",
     });
 
@@ -309,14 +310,8 @@ export class TrackingService {
       title: input.title || "",
       url: input.url,
       visitorKey: input.visitorKey,
-      referrer: input.referrer,
+      referrer: input.referrer || attribution.source || "direct",
       country: geo.country,
-      countryCode: geo.countryCode,
-      city: geo.city,
-      browser: device.browser,
-      os: device.os,
-      deviceType: device.deviceType,
-      source: attribution.source,
       ip: ip || "127.0.0.1",
       viewedAt: now.toISOString(),
       hitsCount: realtimeService.getVisitorPageviews(website.id, input.visitorKey),
