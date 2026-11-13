@@ -192,9 +192,8 @@ export class TrackingService {
       return { status: "error", message: "Failed to resolve visitor" };
     }
 
-    // If newly created visitor, record location
-    const isNewVisitor = Math.abs(visitor.firstSeenAt.getTime() - visitor.lastSeenAt.getTime()) < 1000;
-    if (isNewVisitor) {
+    // Record visitor location if available and not yet recorded or new visitor
+    if (geo.countryCode && geo.countryCode !== "UNKNOWN") {
       db.insert(visitorLocations)
         .values({
           websiteId: website.id,
@@ -312,6 +311,11 @@ export class TrackingService {
       visitorKey: input.visitorKey,
       referrer: input.referrer || attribution.source || "direct",
       country: geo.country,
+      countryCode: geo.countryCode,
+      city: geo.city,
+      browser: device.browser,
+      os: device.os,
+      deviceType: device.deviceType,
       ip: ip || "127.0.0.1",
       viewedAt: now.toISOString(),
       hitsCount: realtimeService.getVisitorPageviews(website.id, input.visitorKey),

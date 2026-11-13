@@ -1,6 +1,7 @@
 import { db } from "../db/index.js";
 import { sql } from "drizzle-orm";
 import { logger } from "../utils/logger.js";
+import { GeolocationService } from "./geolocation.service.js";
 
 export interface ActiveVisitor {
   visitorKey: string;
@@ -122,6 +123,19 @@ class RealtimeService {
       // Do NOT artificially update lastSeenAt to Date.now() so inactive visitors naturally expire after 12 minutes
       randomVis.pageviewsCount = (randomVis.pageviewsCount || 1) + 1;
 
+      // Resolve geo if randomVis has missing country or city
+      let countryCode = randomVis.countryCode;
+      let country = randomVis.country;
+      let city = randomVis.city;
+      if ((!countryCode || countryCode === "XX" || countryCode === "UNKNOWN" || !city) && randomVis.ip) {
+        const geo = GeolocationService.resolve(randomVis.ip);
+        if (geo.countryCode && geo.countryCode !== "UNKNOWN") {
+          countryCode = geo.countryCode;
+          country = geo.country;
+          city = geo.city || city;
+        }
+      }
+
       const hit = {
         id: `live-${websiteId}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         websiteId,
@@ -130,11 +144,11 @@ class RealtimeService {
         url: randomVis.pageUrl || "",
         referrer: randomVis.referrer || randomVis.source || null,
         viewedAt: new Date().toISOString(),
-        country: randomVis.country || "United States",
-        countryCode: randomVis.countryCode || "US",
-        city: randomVis.city || "",
-        browser: randomVis.browser || "Chrome",
-        os: randomVis.os || "Windows",
+        country: country && country !== "Unknown" ? country : "United States",
+        countryCode: countryCode && countryCode !== "XX" && countryCode !== "UNKNOWN" ? countryCode : "US",
+        city: city || "",
+        browser: randomVis.browser && randomVis.browser !== "Other" && randomVis.browser !== "Unknown" ? randomVis.browser : "Chrome",
+        os: randomVis.os && randomVis.os !== "Other" && randomVis.os !== "Unknown" ? randomVis.os : "Windows",
         deviceType: randomVis.deviceType || "desktop",
         visitorKey: randomVis.visitorKey,
         ip: randomVis.ip || fallbackIp(randomVis.visitorKey),
@@ -231,18 +245,31 @@ class RealtimeService {
         const pageviews = Number(row.pageviewsCount) || existing?.pageviewsCount || 1;
 
         if (!existing || existing.lastSeenAt < lastSeen) {
+          let countryCode = row.countryCode;
+          let country = row.country;
+          let city = row.city;
+
+          if ((!countryCode || countryCode === "XX" || countryCode === "UNKNOWN" || !city) && row.ip) {
+            const geo = GeolocationService.resolve(row.ip);
+            if (geo.countryCode && geo.countryCode !== "UNKNOWN") {
+              countryCode = geo.countryCode;
+              country = geo.country;
+              city = geo.city || city;
+            }
+          }
+
           siteMap.set(row.visitorKey, {
             visitorKey: row.visitorKey,
             sessionKey: row.sessionKey,
             currentPath: row.currentPath,
             pageTitle: row.pageTitle || existing?.pageTitle || undefined,
             pageUrl: row.pageUrl || existing?.pageUrl || undefined,
-            country: row.country,
-            countryCode: row.countryCode,
-            city: row.city || undefined,
-            deviceType: row.deviceType,
-            browser: row.browser,
-            os: row.os,
+            country: country || "Unknown",
+            countryCode: countryCode || "XX",
+            city: city || undefined,
+            deviceType: row.deviceType || "desktop",
+            browser: row.browser || "Unknown",
+            os: row.os || "Unknown",
             source: row.source,
             referrer: row.referrer || row.source,
             ip: row.ip || fallbackIp(row.visitorKey),

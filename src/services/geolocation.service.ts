@@ -33,8 +33,8 @@ export class GeolocationService {
       return this.getDefaultLocation();
     }
 
-    // Clean IP (remove IPv6 prefix if present)
-    const cleanIp = ip.replace(/^::ffff:/, "").trim();
+    // Clean IP (take first if comma-separated, remove IPv6 prefix if present)
+    const cleanIp = ip.split(",")[0].replace(/^::ffff:/, "").trim();
 
     // Check for localhost or private networks
     if (
