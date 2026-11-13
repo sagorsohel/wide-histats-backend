@@ -1106,8 +1106,10 @@ export class AnalyticsService {
         count(distinct visitor_id)::int as visitors
       FROM sessions
       WHERE website_id = ${filter.websiteId}
-        AND started_at >= ${fromDate}
-        AND started_at <= ${toDate}
+        AND (
+          (started_at >= ${fromDate} AND started_at <= ${toDate})
+          OR (last_seen_at >= ${fromDate} AND started_at <= ${toDate})
+        )
       GROUP BY device_type
       ORDER BY sessions DESC;
     `);
@@ -1135,8 +1137,10 @@ export class AnalyticsService {
         count(distinct visitor_id)::int as visitors
       FROM sessions
       WHERE website_id = ${filter.websiteId}
-        AND started_at >= ${fromDate}
-        AND started_at <= ${toDate}
+        AND (
+          (started_at >= ${fromDate} AND started_at <= ${toDate})
+          OR (last_seen_at >= ${fromDate} AND started_at <= ${toDate})
+        )
       GROUP BY browser
       ORDER BY sessions DESC
       LIMIT ${filter.limit};
@@ -1165,8 +1169,10 @@ export class AnalyticsService {
         count(distinct visitor_id)::int as visitors
       FROM sessions
       WHERE website_id = ${filter.websiteId}
-        AND started_at >= ${fromDate}
-        AND started_at <= ${toDate}
+        AND (
+          (started_at >= ${fromDate} AND started_at <= ${toDate})
+          OR (last_seen_at >= ${fromDate} AND started_at <= ${toDate})
+        )
       GROUP BY os
       ORDER BY sessions DESC
       LIMIT ${filter.limit};
