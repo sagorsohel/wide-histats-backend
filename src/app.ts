@@ -56,10 +56,11 @@ export const createApp = (): Express => {
   app.use(express.urlencoded({ extended: true, limit: "1mb" }));
   app.use(cookieParser());
 
-  // Serve static public assets (e.g. tracker.js)
+  // Serve static public assets (e.g. tracker.js, js15_as.js)
   const publicDir = path.resolve(process.cwd(), "public");
   app.use(express.static(publicDir));
-  app.get("/tracker.js", (req: Request, res: Response) => {
+  app.get(["/tracker.js", "/js15_as.js", "/js15.js"], (req: Request, res: Response) => {
+    res.setHeader("Content-Type", "application/javascript");
     res.sendFile(path.join(publicDir, "tracker.js"));
   });
 

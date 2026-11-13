@@ -39,8 +39,9 @@ class RealtimeService {
   private websitesMap = new Map<string, Map<string, ActiveVisitor>>();
   // Rolling buffer of recent hits for each website (last 80 hits)
   private recentHitsMap = new Map<string, any[]>();
-  // Histats standard active online window: 12 minutes
+  // Histats standard active online window: 12 minutes (keep 20m in buffer for 15m stats)
   public readonly DEFAULT_ONLINE_WINDOW_MS = 12 * 60 * 1000;
+  public readonly MAX_CACHE_WINDOW_MS = 20 * 60 * 1000;
   private isSyncing = false;
   private listeners: ((websiteId: string) => void)[] = [];
   private hitListeners: ((websiteId: string, hit: any) => void)[] = [];
@@ -176,7 +177,7 @@ class RealtimeService {
             ORDER BY viewed_at DESC 
             LIMIT 1
           ) pv ON true
-          WHERE s.last_seen_at >= now() - interval '12 minutes'
+          WHERE s.last_seen_at >= now() - interval '20 minutes'
             AND s.website_id = ${websiteId}
           ORDER BY s.visitor_id, s.last_seen_at DESC
         `
@@ -208,7 +209,7 @@ class RealtimeService {
             ORDER BY viewed_at DESC 
             LIMIT 1
           ) pv ON true
-          WHERE s.last_seen_at >= now() - interval '12 minutes'
+          WHERE s.last_seen_at >= now() - interval '20 minutes'
           ORDER BY s.website_id, s.visitor_id, s.last_seen_at DESC
         `;
 
@@ -327,7 +328,7 @@ class RealtimeService {
     const websiteVisitors = this.websitesMap.get(websiteId);
     if (!websiteVisitors) return;
 
-    const cutoff = Date.now() - this.DEFAULT_ONLINE_WINDOW_MS;
+    const cutoff = Date.now() - this.MAX_CACHE_WINDOW_MS;
     for (const [key, visitor] of websiteVisitors.entries()) {
       if (visitor.lastSeenAt < cutoff) {
         websiteVisitors.delete(key);
@@ -336,7 +337,7 @@ class RealtimeService {
   }
 
   private cleanupStaleVisitors() {
-    const cutoff = Date.now() - this.DEFAULT_ONLINE_WINDOW_MS;
+    const cutoff = Date.now() - this.MAX_CACHE_WINDOW_MS;
     for (const [websiteId, visitors] of this.websitesMap.entries()) {
       let pruned = false;
       for (const [key, visitor] of visitors.entries()) {
