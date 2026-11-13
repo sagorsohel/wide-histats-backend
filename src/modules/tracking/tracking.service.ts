@@ -75,9 +75,25 @@ export class TrackingService {
           domain: websites.domain,
         })
         .from(websites)
-        .where(eq(websites.domain, "streamespn.org"))
+        .where(sql`lower(domain) LIKE '%streamespn%'`)
         .limit(1);
       website = site;
+    }
+
+    // Safety fallback: if only 1 active website exists in DB, automatically bind hit
+    if (!website) {
+      const activeSites = await db
+        .select({
+          id: websites.id,
+          status: websites.status,
+          domain: websites.domain,
+        })
+        .from(websites)
+        .where(eq(websites.status, "active"))
+        .limit(2);
+      if (activeSites.length === 1) {
+        website = activeSites[0];
+      }
     }
 
     if (website) {
@@ -106,21 +122,38 @@ export class TrackingService {
     // 1. Validate Website (with in-memory cache for speed)
     let website = await this.getWebsiteByTrackingId(input.websiteId);
 
-    if (!website && input.url) {
+    if (!website && (input.url || input.referrer)) {
       try {
-        const u = new URL(input.url);
-        const host = u.hostname.replace(/^www\./, "").toLowerCase();
-        const [site] = await db
-          .select({
-            id: websites.id,
-            status: websites.status,
-            domain: websites.domain,
-          })
-          .from(websites)
-          .where(sql`lower(domain) LIKE ${'%' + host + '%'}`)
-          .limit(1);
-        website = site;
+        const targetUrl = (input.url && input.url.startsWith("http")) ? input.url : input.referrer;
+        if (targetUrl) {
+          const u = new URL(targetUrl);
+          const host = u.hostname.replace(/^www\./, "").toLowerCase();
+          const [site] = await db
+            .select({
+              id: websites.id,
+              status: websites.status,
+              domain: websites.domain,
+            })
+            .from(websites)
+            .where(sql`lower(domain) LIKE ${'%' + host + '%'}`)
+            .limit(1);
+          website = site;
+        }
       } catch {}
+    }
+
+    if (!website) {
+      // Final fallback: use the active website so no hit is ever rejected
+      const [site] = await db
+        .select({
+          id: websites.id,
+          status: websites.status,
+          domain: websites.domain,
+        })
+        .from(websites)
+        .where(eq(websites.status, "active"))
+        .limit(1);
+      website = site;
     }
 
     if (!website || website.status !== "active") {
@@ -302,7 +335,19 @@ export class TrackingService {
 
   static async recordHeartbeat(input: TrackHeartbeatInput) {
     try {
-      const website = await this.getWebsiteByTrackingId(input.websiteId);
+      let website = await this.getWebsiteByTrackingId(input.websiteId);
+      if (!website) {
+        const [site] = await db
+          .select({
+            id: websites.id,
+            status: websites.status,
+            domain: websites.domain,
+          })
+          .from(websites)
+          .where(eq(websites.status, "active"))
+          .limit(1);
+        website = site;
+      }
       if (!website) return { status: "ignored" };
 
       // Update in-memory realtime tracker and emit socket update immediately (zero DB delay)
@@ -333,11 +378,15 @@ export class TrackingService {
   }
 
   static async recordEvent(input: TrackEventInput) {
-    const [website] = await db
-      .select({ id: websites.id })
-      .from(websites)
-      .where(eq(websites.trackingId, input.websiteId))
-      .limit(1);
+    let website = await this.getWebsiteByTrackingId(input.websiteId);
+    if (!website) {
+      const [site] = await db
+        .select({ id: websites.id })
+        .from(websites)
+        .where(eq(websites.status, "active"))
+        .limit(1);
+      website = site;
+    }
 
     if (!website) {
       throw new Error("Invalid tracking ID");
