@@ -39,8 +39,8 @@ class RealtimeService {
   private websitesMap = new Map<string, Map<string, ActiveVisitor>>();
   // Rolling buffer of recent hits for each website (last 80 hits)
   private recentHitsMap = new Map<string, any[]>();
-  // Histats standard active online window: 10 minutes (matches Histats.com act=18 online count exactly)
-  public readonly DEFAULT_ONLINE_WINDOW_MS = 10 * 60 * 1000;
+  // Histats standard active online window: 12 minutes
+  public readonly DEFAULT_ONLINE_WINDOW_MS = 12 * 60 * 1000;
   private isSyncing = false;
   private listeners: ((websiteId: string) => void)[] = [];
   private hitListeners: ((websiteId: string, hit: any) => void)[] = [];
@@ -117,7 +117,7 @@ class RealtimeService {
         activeRecent[Math.floor(Math.random() * activeRecent.length)];
       if (!randomVis) continue;
 
-      // Do NOT artificially update lastSeenAt to Date.now() so inactive visitors naturally expire after 10 minutes
+      // Do NOT artificially update lastSeenAt to Date.now() so inactive visitors naturally expire after 12 minutes
       randomVis.pageviewsCount = (randomVis.pageviewsCount || 1) + 1;
 
       const hit = {
@@ -176,7 +176,7 @@ class RealtimeService {
             ORDER BY viewed_at DESC 
             LIMIT 1
           ) pv ON true
-          WHERE s.last_seen_at >= now() - interval '10 minutes'
+          WHERE s.last_seen_at >= now() - interval '12 minutes'
             AND s.website_id = ${websiteId}
           ORDER BY s.visitor_id, s.last_seen_at DESC
         `
@@ -208,7 +208,7 @@ class RealtimeService {
             ORDER BY viewed_at DESC 
             LIMIT 1
           ) pv ON true
-          WHERE s.last_seen_at >= now() - interval '10 minutes'
+          WHERE s.last_seen_at >= now() - interval '12 minutes'
           ORDER BY s.website_id, s.visitor_id, s.last_seen_at DESC
         `;
 
