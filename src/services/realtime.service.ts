@@ -40,7 +40,7 @@ class RealtimeService {
   // Rolling buffer of recent hits for each website (last 80 hits)
   private recentHitsMap = new Map<string, any[]>();
   // Histats standard active online window: 25 minutes (keep 40m in buffer)
-  public readonly DEFAULT_ONLINE_WINDOW_MS = 25 * 60 * 1000;
+  public readonly DEFAULT_ONLINE_WINDOW_MS = 10 * 60 * 1000;
   public readonly MAX_CACHE_WINDOW_MS = 40 * 60 * 1000;
   private isSyncing = false;
   private listeners: ((websiteId: string) => void)[] = [];
