@@ -46,7 +46,10 @@ export const createApp = (): Express => {
       if (isPublicPath(req.path)) {
         return callback(null, {
           origin: true,
-          credentials: false,
+          // navigator.sendBeacon always sends in credentialed mode; without
+          // Access-Control-Allow-Credentials the browser silently drops every hit.
+          // Safe here: these endpoints are unauthenticated and never read auth cookies.
+          credentials: true,
           methods: corsMethods,
           allowedHeaders: corsHeaders,
         });
