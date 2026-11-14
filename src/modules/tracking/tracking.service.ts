@@ -77,6 +77,27 @@ export class TrackingService {
     return website;
   }
 
+  /**
+   * Heartbeats/events carry no URL, so when the tracking id is an alias we have not seen yet,
+   * resolve the website from the (already registered) session key instead.
+   */
+  private static async getWebsiteBySession(trackingId: string, sessionKey: string) {
+    const [row] = await db
+      .select({
+        id: websites.id,
+        status: websites.status,
+        domain: websites.domain,
+      })
+      .from(sessions)
+      .innerJoin(websites, eq(websites.id, sessions.websiteId))
+      .where(eq(sessions.sessionKey, sessionKey))
+      .limit(1);
+    if (row) {
+      this.websiteCache.set(trackingId, { ...row, cachedAt: Date.now() });
+    }
+    return row;
+  }
+
   static invalidateWebsiteCache(trackingId?: string) {
     if (trackingId) {
       this.websiteCache.delete(trackingId);
@@ -111,6 +132,10 @@ export class TrackingService {
             )
             .limit(1);
           website = site;
+          if (site) {
+            // Remember this alias (e.g. Histats-style numeric id embedded in the page)
+            this.websiteCache.set(input.websiteId, { ...site, cachedAt: Date.now() });
+          }
         }
       } catch (err: any) {
         logger.debug(`Host-based website lookup failed: ${err?.message || err}`);
@@ -296,8 +321,9 @@ export class TrackingService {
 
   static async recordHeartbeat(input: TrackHeartbeatInput) {
     try {
-      let website = await this.getWebsiteByTrackingId(input.websiteId);
-      if (!website) return { status: "ignored" };
+      let website: any = await this.getWebsiteByTrackingId(input.websiteId);
+      if (!website) website = await this.getWebsiteBySession(input.websiteId, input.sessionKey);
+      if (!website || website.status !== "active") return { status: "ignored" };
 
       // Update in-memory realtime tracker and emit socket update immediately (zero DB delay)
       realtimeService.heartbeat(website.id, input.visitorKey, input.path);
@@ -327,7 +353,8 @@ export class TrackingService {
   }
 
   static async recordEvent(input: TrackEventInput) {
-    let website = await this.getWebsiteByTrackingId(input.websiteId);
+    let website: any = await this.getWebsiteByTrackingId(input.websiteId);
+    if (!website) website = await this.getWebsiteBySession(input.websiteId, input.sessionKey);
     if (!website) {
       throw new HttpError(404, "Invalid tracking ID");
     }
