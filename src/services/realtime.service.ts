@@ -22,20 +22,6 @@ export interface ActiveVisitor {
   lastSeenAt: number; // timestamp in ms
 }
 
-function fallbackIp(key?: string): string {
-  if (!key) return "103.145.72.45";
-  let hash = 0;
-  for (let i = 0; i < key.length; i++) {
-    hash = (hash << 5) - hash + key.charCodeAt(i);
-    hash |= 0;
-  }
-  const a = 100 + (Math.abs(hash) % 120);
-  const b = (Math.abs(hash >> 8) % 250) + 1;
-  const c = (Math.abs(hash >> 16) % 250) + 1;
-  const d = (Math.abs(hash >> 24) % 250) + 1;
-  return `${a}.${b}.${c}.${d}`;
-}
-
 class RealtimeService {
   // Map of websiteId -> Map of visitorKey -> ActiveVisitor
   private websitesMap = new Map<string, Map<string, ActiveVisitor>>();
@@ -105,58 +91,6 @@ class RealtimeService {
 
   public getRecentHits(websiteId: string): any[] {
     return this.recentHitsMap.get(websiteId) || [];
-  }
-
-  private streamLiveHit() {
-    const cutoff = Date.now() - 3 * 60 * 1000;
-    for (const [websiteId, visitorsMap] of this.websitesMap.entries()) {
-      if (visitorsMap.size === 0) continue;
-      const activeRecent = Array.from(visitorsMap.values()).filter(
-        (v) => v.lastSeenAt >= cutoff,
-      );
-      if (activeRecent.length === 0) continue;
-
-      const randomVis =
-        activeRecent[Math.floor(Math.random() * activeRecent.length)];
-      if (!randomVis) continue;
-
-      // Do NOT artificially update lastSeenAt to Date.now() so inactive visitors naturally expire after 12 minutes
-      randomVis.pageviewsCount = (randomVis.pageviewsCount || 1) + 1;
-
-      // Resolve geo if randomVis has missing country or city
-      let countryCode = randomVis.countryCode;
-      let country = randomVis.country;
-      let city = randomVis.city;
-      if ((!countryCode || countryCode === "XX" || countryCode === "UNKNOWN" || !city) && randomVis.ip) {
-        const geo = GeolocationService.resolve(randomVis.ip);
-        if (geo.countryCode && geo.countryCode !== "UNKNOWN") {
-          countryCode = geo.countryCode;
-          country = geo.country;
-          city = geo.city || city;
-        }
-      }
-
-      const hit = {
-        id: `live-${websiteId}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        websiteId,
-        path: randomVis.currentPath || "/",
-        title: randomVis.pageTitle || randomVis.currentPath || "Home",
-        url: randomVis.pageUrl || "",
-        referrer: randomVis.referrer || randomVis.source || null,
-        viewedAt: new Date().toISOString(),
-        country: country && country !== "Unknown" ? country : "United States",
-        countryCode: countryCode && countryCode !== "XX" && countryCode !== "UNKNOWN" ? countryCode : "US",
-        city: city || "",
-        browser: randomVis.browser && randomVis.browser !== "Other" && randomVis.browser !== "Unknown" ? randomVis.browser : "Chrome",
-        os: randomVis.os && randomVis.os !== "Other" && randomVis.os !== "Unknown" ? randomVis.os : "Windows",
-        deviceType: randomVis.deviceType || "desktop",
-        visitorKey: randomVis.visitorKey,
-        ip: randomVis.ip || fallbackIp(randomVis.visitorKey),
-        hitsCount: randomVis.pageviewsCount,
-      };
-
-      this.recordHit(websiteId, hit);
-    }
   }
 
   async syncFromDatabase(websiteId?: string): Promise<void> {
@@ -272,7 +206,7 @@ class RealtimeService {
             os: row.os || "Unknown",
             source: row.source,
             referrer: row.referrer || row.source,
-            ip: row.ip || fallbackIp(row.visitorKey),
+            ip: row.ip || undefined,
             pageviewsCount: Math.max(pageviews, existing?.pageviewsCount || 1),
             lastSeenAt: lastSeen,
           });

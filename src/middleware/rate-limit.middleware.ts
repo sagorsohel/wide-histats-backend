@@ -1,9 +1,9 @@
 import rateLimit from "express-rate-limit";
 
-// Rate limiter for general public tracking requests (unlimited to prevent dropping live audience hits)
+// Per-IP limiter for public tracking requests (generous: a visitor IP never needs more than this)
 export const trackingRateLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 1000000, // Effectively unlimited (1,000,000 req/min) so high-traffic sites never drop visitor heartbeats
+  max: 300, // 300 req/min per visitor IP
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,

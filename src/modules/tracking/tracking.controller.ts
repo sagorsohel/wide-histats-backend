@@ -2,38 +2,22 @@ import { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import { TrackingService } from "./tracking.service.js";
 import { ApiResponse } from "../../utils/api-response.js";
+import { env } from "../../config/env.js";
 import { logger } from "../../utils/logger.js";
 
 export class TrackingController {
+  /**
+   * Client IP. Express resolves req.ip according to the configured number of trusted
+   * proxies (TRUST_PROXY_HOPS), so spoofed X-Forwarded-For values are ignored.
+   * Cloudflare's CF-Connecting-IP is only honoured when behind a trusted proxy.
+   */
   private static extractClientIp(req: Request): string {
     const cf = req.headers["cf-connecting-ip"];
-    if (typeof cf === "string" && cf.trim()) {
+    if (env.TRUST_PROXY_HOPS > 0 && typeof cf === "string" && cf.trim()) {
       return cf.trim().replace(/^::ffff:/, "");
     }
-    const trueClientIp = req.headers["true-client-ip"];
-    if (typeof trueClientIp === "string" && trueClientIp.trim()) {
-      return trueClientIp.trim().replace(/^::ffff:/, "");
-    }
-    const clientIp = req.headers["x-client-ip"];
-    if (typeof clientIp === "string" && clientIp.trim()) {
-      return clientIp.trim().replace(/^::ffff:/, "");
-    }
-    const forwarded = req.headers["x-forwarded-for"];
-    if (typeof forwarded === "string" && forwarded.trim()) {
-      return forwarded.split(",")[0].trim().replace(/^::ffff:/, "");
-    }
-    const realIp = req.headers["x-real-ip"];
-    if (typeof realIp === "string" && realIp.trim()) {
-      return realIp.trim().replace(/^::ffff:/, "");
-    }
-    if (req.ip && typeof req.ip === "string") {
-      return req.ip.replace(/^::ffff:/, "");
-    }
-    const remote = req.socket?.remoteAddress;
-    if (remote) {
-      return remote.replace(/^::ffff:/, "");
-    }
-    return "127.0.0.1";
+    const ip = req.ip || req.socket?.remoteAddress;
+    return ip ? ip.replace(/^::ffff:/, "") : "127.0.0.1";
   }
 
   static async pageView(req: Request, res: Response, next: NextFunction) {
@@ -107,11 +91,12 @@ export class TrackingController {
       const visitorCookie = req.cookies?.["_wide_vis"];
       const visitorKey =
         visitorCookie ||
-        crypto.createHash("md5").update(`${ip}-${userAgent}`).digest("hex");
+        crypto.createHash("sha256").update(`${ip}-${userAgent}`).digest("hex").slice(0, 32);
       const sessionKey = crypto
-        .createHash("md5")
+        .createHash("sha256")
         .update(`${visitorKey}-${today}`)
-        .digest("hex");
+        .digest("hex")
+        .slice(0, 32);
 
       let path = "/";
       let pageUrl = referrer || "/";

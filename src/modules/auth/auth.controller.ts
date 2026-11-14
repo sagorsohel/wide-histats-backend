@@ -1,13 +1,20 @@
 import { Request, Response, NextFunction } from "express";
 import { AuthService } from "./auth.service.js";
 import { ApiResponse } from "../../utils/api-response.js";
+import { env } from "../../config/env.js";
+import { durationToMs } from "../../utils/duration.js";
 import { verifyRefreshToken } from "../../utils/jwt.js";
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
+  secure: env.COOKIE_SECURE ? env.COOKIE_SECURE === "true" : env.NODE_ENV === "production",
   sameSite: "lax" as const,
-  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  maxAge: durationToMs(env.JWT_REFRESH_EXPIRES_IN, 7 * 24 * 60 * 60 * 1000),
+};
+
+const ACCESS_COOKIE_OPTIONS = {
+  ...COOKIE_OPTIONS,
+  maxAge: durationToMs(env.JWT_ACCESS_EXPIRES_IN, 15 * 60 * 1000),
 };
 
 export class AuthController {
@@ -15,10 +22,7 @@ export class AuthController {
     try {
       const result = await AuthService.register(req.body);
       res.cookie("refreshToken", result.refreshToken, COOKIE_OPTIONS);
-      res.cookie("accessToken", result.accessToken, {
-        ...COOKIE_OPTIONS,
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-      });
+      res.cookie("accessToken", result.accessToken, ACCESS_COOKIE_OPTIONS);
       return ApiResponse.success(res, result, "Registration successful", 201);
     } catch (error: any) {
       next(error);
@@ -29,10 +33,7 @@ export class AuthController {
     try {
       const result = await AuthService.login(req.body);
       res.cookie("refreshToken", result.refreshToken, COOKIE_OPTIONS);
-      res.cookie("accessToken", result.accessToken, {
-        ...COOKIE_OPTIONS,
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-      });
+      res.cookie("accessToken", result.accessToken, ACCESS_COOKIE_OPTIONS);
       return ApiResponse.success(res, result, "Login successful");
     } catch (error: any) {
       next(error);
@@ -46,10 +47,7 @@ export class AuthController {
         return ApiResponse.error(res, "Refresh token is required", 400);
       }
       const result = await AuthService.refresh(token);
-      res.cookie("accessToken", result.accessToken, {
-        ...COOKIE_OPTIONS,
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-      });
+      res.cookie("accessToken", result.accessToken, ACCESS_COOKIE_OPTIONS);
       return ApiResponse.success(res, result, "Token refreshed successfully");
     } catch (error: any) {
       next(error);

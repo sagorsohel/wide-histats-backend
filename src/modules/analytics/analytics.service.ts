@@ -1,4 +1,5 @@
 import { eq, and, sql } from "drizzle-orm";
+import { HttpError } from "../../utils/http-error.js";
 import { db } from "../../db/index.js";
 import { websites } from "../../db/schema/websites.js";
 import { AnalyticsFilterInput } from "./analytics.schema.js";
@@ -101,42 +102,20 @@ export class AnalyticsService {
       }
 
       if (!dbWebsite) {
-        // Fallback: match by 7-digit displayId or deterministic hash or alias
-        const allSites = await db.select().from(websites);
-        dbWebsite = allSites.find((s) => {
-          if (s.trackingId === websiteId) return true;
-          if (
-            (websiteId === "wid_4b5f43420921ee6f" || websiteId.includes("4b5f43420921ee6f")) &&
-            s.domain.toLowerCase().includes("streamespn")
-          ) {
-            return true;
-          }
-          let disp = s.trackingId.replace(/[^0-9]/g, "");
-          if (!disp || disp.length < 5) {
-            let hash = 0;
-            for (let i = 0; i < s.id.length; i++) {
-              hash = (hash * 31 + s.id.charCodeAt(i)) & 0xffffffff;
-            }
-            disp = String(4800000 + (Math.abs(hash) % 300000));
-          }
-          return disp === websiteId;
-        });
-
-        if (!dbWebsite && allSites.length > 0) {
-          dbWebsite = allSites[0];
-        }
-      }
-
-      if (!dbWebsite) {
-        throw new Error("Website not found.");
+        throw new HttpError(404, "Website not found.");
       }
       website = dbWebsite;
       this.setInCache(cacheKey, website, 60000); // 1 minute TTL
     }
 
-    // Histats behavior: Anyone with a valid tracking ID or website ID can view public statistics
-    // (matches histats.com/viewstats/?sid=... where all registered websites have public stats viewing).
-    return website;
+    // Owners can always view their sites; other viewers only if the site is explicitly public.
+    if (website.isPublic || (userId && website.userId === userId)) {
+      return website;
+    }
+    if (!userId) {
+      throw new HttpError(401, "Authentication required to view this website.");
+    }
+    throw new HttpError(403, "You do not have access to this website.");
   }
 
   static async getOverview(userId: string | undefined, filter: AnalyticsFilterInput) {

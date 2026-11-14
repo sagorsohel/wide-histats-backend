@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { eq, and, or, sql } from "drizzle-orm";
+import { HttpError } from "../../utils/http-error.js";
 import { db } from "../../db/index.js";
 import { websites } from "../../db/schema/websites.js";
 import { visitors } from "../../db/schema/visitors.js";
@@ -10,7 +11,6 @@ import { env } from "../../config/env.js";
 import { realtimeService } from "../../services/realtime.service.js";
 import { TrackingService } from "../tracking/tracking.service.js";
 
-import { baselineStats, getBaselineStats, getCleanDomain } from "../../constants/baselineStats.js";
 
 export class WebsiteService {
   private static statsCache: {
@@ -217,7 +217,7 @@ export class WebsiteService {
       .limit(1);
 
     if (!website) {
-      throw new Error("Website not found or access denied.");
+      throw new HttpError(404, "Website not found or access denied.");
     }
 
     const activeVisitors = realtimeService.getActiveCount(website.id);
@@ -239,7 +239,7 @@ export class WebsiteService {
       .limit(1);
 
     if (!existing) {
-      throw new Error("Website not found or access denied.");
+      throw new HttpError(404, "Website not found or access denied.");
     }
 
     const [updated] = await db
@@ -265,7 +265,7 @@ export class WebsiteService {
       .limit(1);
 
     if (!existing) {
-      throw new Error("Website not found or access denied.");
+      throw new HttpError(404, "Website not found or access denied.");
     }
 
     await db.delete(websites).where(eq(websites.id, websiteId));

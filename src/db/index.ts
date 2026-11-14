@@ -14,9 +14,7 @@ export const pool = new Pool({
   connectionTimeoutMillis: 10000,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000,
-  ssl: {
-    rejectUnauthorized: false,
-  },
+  ssl: env.DB_SSL === "false" ? false : { rejectUnauthorized: false },
 });
 
 pool.on("error", (err: any) => {

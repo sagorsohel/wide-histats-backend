@@ -3,7 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import path from "path";
-import { env } from "./config/env.js";
+import { env, isDashboardOrigin } from "./config/env.js";
 import authRoutes from "./modules/auth/auth.routes.js";
 import websiteRoutes from "./modules/websites/website.routes.js";
 import trackingRoutes from "./modules/tracking/tracking.routes.js";
@@ -11,13 +11,14 @@ import analyticsRoutes from "./modules/analytics/analytics.routes.js";
 import { TrackingController } from "./modules/tracking/tracking.controller.js";
 import { AnalyticsController } from "./modules/analytics/analytics.controller.js";
 import { notFoundHandler, errorHandler } from "./middleware/error.middleware.js";
+import { trackingRateLimiter } from "./middleware/rate-limit.middleware.js";
 import { ApiResponse } from "./utils/api-response.js";
 
 export const createApp = (): Express => {
   const app = express();
 
   // Trust reverse proxy headers (Cloudflare, Nginx, load balancers)
-  app.set("trust proxy", true);
+  app.set("trust proxy", env.TRUST_PROXY_HOPS);
 
   // Security headers (relaxed for public tracker embed and beacons)
   app.use(
@@ -27,28 +28,38 @@ export const createApp = (): Express => {
     })
   );
 
-  // Dynamic CORS configuration
+  // CORS: public tracking endpoints accept any origin (no credentials);
+  // everything else (dashboard API) only accepts the configured dashboard origin.
+  const isPublicPath = (p: string) =>
+    p.startsWith("/api/v1/track") ||
+    p === "/0.gif" ||
+    p === "/livearray" ||
+    p === "/tracker.js" ||
+    p === "/js15_as.js" ||
+    p === "/js15.js";
+
+  const corsMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+  const corsHeaders = ["Content-Type", "Authorization", "X-Requested-With"];
+
   app.use(
-    cors({
-      origin: (origin, callback) => {
-        // Always allow requests with no origin (like mobile apps, curl, or sendBeacon)
-        if (!origin) return callback(null, true);
-
-        // Allow configured dashboard origin and localhost development
-        if (
-          origin === env.CORS_ORIGIN ||
-          origin.startsWith("http://localhost:") ||
-          origin.startsWith("http://127.0.0.1:")
-        ) {
-          return callback(null, true);
-        }
-
-        // For public tracking endpoints, allow any origin
-        return callback(null, true);
-      },
-      credentials: true,
-      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    cors((req, callback) => {
+      if (isPublicPath(req.path)) {
+        return callback(null, {
+          origin: true,
+          credentials: false,
+          methods: corsMethods,
+          allowedHeaders: corsHeaders,
+        });
+      }
+      const origin = req.headers.origin;
+      // No Origin header: non-browser client (curl, server-to-server) - CORS not applicable
+      const allowed = !origin || isDashboardOrigin(origin);
+      callback(null, {
+        origin: allowed,
+        credentials: true,
+        methods: corsMethods,
+        allowedHeaders: corsHeaders,
+      });
     })
   );
 
@@ -65,7 +76,7 @@ export const createApp = (): Express => {
   });
 
   // Histats 0.gif transparent pixel beacon (for noscript / ad-blocker fallback)
-  app.get("/0.gif", TrackingController.pixelBeacon);
+  app.get("/0.gif", trackingRateLimiter, TrackingController.pixelBeacon);
 
   // Histats-compatible livearray endpoint
   app.get("/livearray", AnalyticsController.livearray);

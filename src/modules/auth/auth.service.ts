@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { eq, and, isNull, gt } from "drizzle-orm";
+import { HttpError } from "../../utils/http-error.js";
 import { db } from "../../db/index.js";
 import { users } from "../../db/schema/users.js";
 import { refreshTokens } from "../../db/schema/refresh-tokens.js";
@@ -9,7 +10,11 @@ import {
   signRefreshToken,
   verifyRefreshToken,
 } from "../../utils/jwt.js";
+import { env } from "../../config/env.js";
+import { durationToMs } from "../../utils/duration.js";
 import { RegisterInput, LoginInput } from "./auth.schema.js";
+
+const REFRESH_TTL_MS = durationToMs(env.JWT_REFRESH_EXPIRES_IN, 7 * 24 * 60 * 60 * 1000);
 
 const hashToken = (token: string): string => {
   return crypto.createHash("sha256").update(token).digest("hex");
@@ -25,7 +30,7 @@ export class AuthService {
       .limit(1);
 
     if (existing.length > 0) {
-      throw new Error("An account with this email address already exists.");
+      throw new HttpError(409, "An account with this email address already exists.");
     }
 
     // 2. Hash password
@@ -46,7 +51,7 @@ export class AuthService {
     const refreshToken = signRefreshToken({ userId: user.id, email: user.email });
 
     // Store refresh token for this specific device
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
     const tokenHash = hashToken(refreshToken);
     await db.insert(refreshTokens).values({
       userId: user.id,
@@ -74,19 +79,19 @@ export class AuthService {
       .limit(1);
 
     if (!user) {
-      throw new Error("Invalid email or password.");
+      throw new HttpError(401, "Invalid email or password.");
     }
 
     const isMatch = await comparePassword(input.password, user.passwordHash);
     if (!isMatch) {
-      throw new Error("Invalid email or password.");
+      throw new HttpError(401, "Invalid email or password.");
     }
 
     const accessToken = signAccessToken({ userId: user.id, email: user.email });
     const refreshToken = signRefreshToken({ userId: user.id, email: user.email });
 
     // Store refresh token for this specific device (supports unlimited concurrent devices)
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
     const tokenHash = hashToken(refreshToken);
     await db.insert(refreshTokens).values({
       userId: user.id,
@@ -109,7 +114,7 @@ export class AuthService {
   static async refresh(token: string) {
     const payload = verifyRefreshToken(token);
     if (!payload) {
-      throw new Error("Invalid or expired refresh token.");
+      throw new HttpError(401, "Invalid or expired refresh token.");
     }
 
     const [user] = await db
@@ -119,7 +124,7 @@ export class AuthService {
       .limit(1);
 
     if (!user) {
-      throw new Error("User no longer exists.");
+      throw new HttpError(401, "User no longer exists.");
     }
 
     // Check that this device's refresh token is active and not revoked
@@ -150,7 +155,7 @@ export class AuthService {
     }
 
     if (!matchedToken) {
-      throw new Error("Refresh token has been revoked or expired.");
+      throw new HttpError(401, "Refresh token has been revoked or expired.");
     }
 
     const accessToken = signAccessToken({ userId: user.id, email: user.email });
@@ -214,7 +219,7 @@ export class AuthService {
       .limit(1);
 
     if (!user) {
-      throw new Error("User not found.");
+      throw new HttpError(404, "User not found.");
     }
 
     return user;
@@ -222,7 +227,7 @@ export class AuthService {
 
   static async updateProfile(userId: string, data: { name?: string }) {
     if (!data.name || !data.name.trim()) {
-      throw new Error("Name cannot be empty.");
+      throw new HttpError(400, "Name cannot be empty.");
     }
 
     const [updated] = await db
@@ -240,7 +245,7 @@ export class AuthService {
       });
 
     if (!updated) {
-      throw new Error("User not found.");
+      throw new HttpError(404, "User not found.");
     }
 
     return updated;
@@ -251,10 +256,10 @@ export class AuthService {
     data: { currentPassword?: string; newPassword?: string }
   ) {
     if (!data.currentPassword || !data.newPassword) {
-      throw new Error("Current password and new password are required.");
+      throw new HttpError(400, "Current password and new password are required.");
     }
-    if (data.newPassword.length < 6) {
-      throw new Error("New password must be at least 6 characters.");
+    if (data.newPassword.length < 8) {
+      throw new HttpError(400, "New password must be at least 8 characters.");
     }
 
     const [user] = await db
@@ -267,12 +272,12 @@ export class AuthService {
       .limit(1);
 
     if (!user) {
-      throw new Error("User not found.");
+      throw new HttpError(404, "User not found.");
     }
 
     const isMatch = await comparePassword(data.currentPassword, user.passwordHash);
     if (!isMatch) {
-      throw new Error("Current password is incorrect.");
+      throw new HttpError(400, "Current password is incorrect.");
     }
 
     const newHash = await hashPassword(data.newPassword);
@@ -283,6 +288,12 @@ export class AuthService {
         updatedAt: new Date(),
       })
       .where(eq(users.id, userId));
+
+    // Sign out every device so a stolen session can't outlive the password change
+    await db
+      .update(refreshTokens)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
 
     return { message: "Password changed successfully." };
   }

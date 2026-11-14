@@ -4,15 +4,21 @@ import { verifyAccessToken } from "../utils/jwt.js";
 import { db } from "../db/index.js";
 import { websites } from "../db/schema/websites.js";
 import { eq, and } from "drizzle-orm";
+import { isDashboardOrigin } from "../config/env.js";
 import { logger } from "../utils/logger.js";
 import { realtimeService } from "../services/realtime.service.js";
 
 let io: SocketIOServer | null = null;
 
+const isAllowedOrigin = (origin?: string): boolean => {
+  if (!origin) return true; // non-browser clients
+  return isDashboardOrigin(origin);
+};
+
 export const initSocketServer = (httpServer: HttpServer): SocketIOServer => {
   io = new SocketIOServer(httpServer, {
     cors: {
-      origin: "*", // or configured CORS origin
+      origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
       methods: ["GET", "POST"],
       credentials: true,
     },
@@ -99,10 +105,15 @@ export const initSocketServer = (httpServer: HttpServer): SocketIOServer => {
           return;
         }
 
-        // Histats behavior: Join rooms for BOTH UUID and numeric trackingId
+        // Only the owner (or anyone, for public sites) may watch live data
+        if (!website.isPublic && (!userId || website.userId !== userId)) {
+          socket.emit("error", { message: "Not authorized to view this website." });
+          return;
+        }
+
+        // Join rooms for BOTH UUID and numeric trackingId
         socket.join(`website:${website.id}`);
         socket.join(`website:${website.trackingId}`);
-        socket.join(`website:${websiteId}`);
         logger.debug(`Socket ${socket.id} joined rooms for website ${website.id} (${website.trackingId})`);
 
         // Emit current active visitor state immediately (0ms)

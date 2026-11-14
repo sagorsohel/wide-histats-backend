@@ -17,7 +17,7 @@ const startServer = async () => {
   // Verify DB connection
   const dbConnected = await checkDatabaseConnection();
   if (dbConnected) {
-    // Automatically seed/ensure admin (admin@gmail.com / sohoj@sohoj) on start & restart
+    // Bootstrap admin on start only when ADMIN_EMAIL / ADMIN_PASSWORD are configured
     await ensureAdminSeed();
   }
 

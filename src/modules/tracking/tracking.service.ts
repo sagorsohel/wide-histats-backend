@@ -1,4 +1,5 @@
-import { eq, and, sql, like } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
+import { HttpError } from "../../utils/http-error.js";
 import { db } from "../../db/index.js";
 import { websites } from "../../db/schema/websites.js";
 import { visitors } from "../../db/schema/visitors.js";
@@ -66,36 +67,6 @@ export class TrackingService {
       website = site;
     }
 
-    // Safety fallback: support legacy or custom aliases (e.g. wid_4b5f43420921ee6f -> streamespn.org)
-    if (!website && (trackingId === "wid_4b5f43420921ee6f" || trackingId.includes("4b5f43420921ee6f"))) {
-      const [site] = await db
-        .select({
-          id: websites.id,
-          status: websites.status,
-          domain: websites.domain,
-        })
-        .from(websites)
-        .where(sql`lower(domain) LIKE '%streamespn%'`)
-        .limit(1);
-      website = site;
-    }
-
-    // Safety fallback: if only 1 active website exists in DB, automatically bind hit
-    if (!website) {
-      const activeSites = await db
-        .select({
-          id: websites.id,
-          status: websites.status,
-          domain: websites.domain,
-        })
-        .from(websites)
-        .where(eq(websites.status, "active"))
-        .limit(2);
-      if (activeSites.length === 1) {
-        website = activeSites[0];
-      }
-    }
-
     if (website) {
       this.websiteCache.set(trackingId, {
         ...website,
@@ -127,7 +98,7 @@ export class TrackingService {
         const targetUrl = (input.url && input.url.startsWith("http")) ? input.url : input.referrer;
         if (targetUrl) {
           const u = new URL(targetUrl);
-          const host = u.hostname.replace(/^www\./, "").toLowerCase();
+          const host = u.hostname.replace(/^www./, "").toLowerCase();
           const [site] = await db
             .select({
               id: websites.id,
@@ -135,29 +106,19 @@ export class TrackingService {
               domain: websites.domain,
             })
             .from(websites)
-            .where(sql`lower(domain) LIKE ${'%' + host + '%'}`)
+            .where(
+              sql`regexp_replace(regexp_replace(lower(domain), '^https?://', ''), '^www[.]|/.*$', '', 'g') = ${host}`
+            )
             .limit(1);
           website = site;
         }
-      } catch {}
-    }
-
-    if (!website) {
-      // Final fallback: use the active website so no hit is ever rejected
-      const [site] = await db
-        .select({
-          id: websites.id,
-          status: websites.status,
-          domain: websites.domain,
-        })
-        .from(websites)
-        .where(eq(websites.status, "active"))
-        .limit(1);
-      website = site;
+      } catch (err: any) {
+        logger.debug(`Host-based website lookup failed: ${err?.message || err}`);
+      }
     }
 
     if (!website || website.status !== "active") {
-      throw new Error("Invalid or inactive website tracking identifier.");
+      throw new HttpError(404, "Invalid or inactive website tracking identifier.");
     }
 
     // 2. Parse User Agent & Geolocation & Attribution
@@ -205,7 +166,7 @@ export class TrackingService {
           latitude: geo.latitude,
           longitude: geo.longitude,
         })
-        .catch(() => {});
+        .catch((err) => logger.warn(`Visitor location insert failed: ${err?.message || err}`));
     }
 
     // 4. Find or create Session
@@ -245,6 +206,7 @@ export class TrackingService {
           })
           .returning();
       } catch (err: any) {
+        logger.debug(`Session insert raced, re-reading: ${err?.message || err}`);
         // Race condition: concurrent hit already created this session
         [session] = await db
           .select()
@@ -266,7 +228,7 @@ export class TrackingService {
           ...(ip ? { ipAddress: ip } : {}),
         })
         .where(eq(sessions.id, session.id))
-        .catch(() => {});
+        .catch((err) => logger.warn(`Session update failed: ${err?.message || err}`));
     }
 
     // 5. Insert Pageview
@@ -335,18 +297,6 @@ export class TrackingService {
   static async recordHeartbeat(input: TrackHeartbeatInput) {
     try {
       let website = await this.getWebsiteByTrackingId(input.websiteId);
-      if (!website) {
-        const [site] = await db
-          .select({
-            id: websites.id,
-            status: websites.status,
-            domain: websites.domain,
-          })
-          .from(websites)
-          .where(eq(websites.status, "active"))
-          .limit(1);
-        website = site;
-      }
       if (!website) return { status: "ignored" };
 
       // Update in-memory realtime tracker and emit socket update immediately (zero DB delay)
@@ -379,16 +329,7 @@ export class TrackingService {
   static async recordEvent(input: TrackEventInput) {
     let website = await this.getWebsiteByTrackingId(input.websiteId);
     if (!website) {
-      const [site] = await db
-        .select({ id: websites.id })
-        .from(websites)
-        .where(eq(websites.status, "active"))
-        .limit(1);
-      website = site;
-    }
-
-    if (!website) {
-      throw new Error("Invalid tracking ID");
+      throw new HttpError(404, "Invalid tracking ID");
     }
 
     const [visitor] = await db
@@ -414,7 +355,7 @@ export class TrackingService {
       .limit(1);
 
     if (!visitor || !session) {
-      throw new Error("Visitor or session not registered before tracking custom event.");
+      throw new HttpError(409, "Visitor or session not registered before tracking custom event.");
     }
 
     const [event] = await db

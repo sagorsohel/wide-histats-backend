@@ -10,11 +10,17 @@ import { hashPassword } from "../utils/password.js";
 import { logger } from "../utils/logger.js";
 import { runMigrations } from "./migrate.js";
 import crypto from "crypto";
+import { env } from "../config/env.js";
 
 export const ensureAdminSeed = async () => {
-  const email = "admin@gmail.com";
-  const password = "sohoj@sohoj";
+  const email = env.ADMIN_EMAIL?.trim().toLowerCase();
+  const password = env.ADMIN_PASSWORD;
   const name = "Admin";
+
+  if (!email || !password) {
+    logger.info("[Startup Seed] ADMIN_EMAIL / ADMIN_PASSWORD not set; skipping admin bootstrap.");
+    return null;
+  }
 
   try {
     const [existingUser] = await db
@@ -23,59 +29,32 @@ export const ensureAdminSeed = async () => {
       .where(eq(users.email, email))
       .limit(1);
 
-    const passwordHash = await hashPassword(password);
     let userId: string;
 
     if (!existingUser) {
+      const passwordHash = await hashPassword(password);
       const [user] = await db
         .insert(users)
-        .values({
-          name,
-          email,
-          passwordHash,
-        })
+        .values({ name, email, passwordHash })
         .returning();
       userId = user.id;
-      logger.info(`[Startup Seed] Created default admin user: ${email} (Password: ${password})`);
+      logger.info(`[Startup Seed] Created admin user: ${email}`);
     } else {
+      // Never overwrite an existing password on restart.
       userId = existingUser.id;
-      await db
-        .update(users)
-        .set({
-          passwordHash,
-          updatedAt: new Date(),
-        })
-        .where(eq(users.id, existingUser.id));
-      logger.info(`[Startup Seed] Ensured admin user ${email} is active with up-to-date credentials.`);
     }
 
-    // Ensure admin user has at least one website
-    const [existingWebsite] = await db
-      .select()
-      .from(websites)
-      .where(eq(websites.userId, userId))
-      .limit(1);
-
-    if (!existingWebsite) {
-      const allWebsites = await db.select().from(websites).limit(10);
-      if (allWebsites.length > 0) {
-        for (const w of allWebsites) {
-          await db
-            .update(websites)
-            .set({ userId })
-            .where(eq(websites.id, w.id));
-        }
-        logger.info(`[Startup Seed] Linked existing websites to admin: ${email}`);
-      } else {
-        await db.insert(websites).values({
-          userId,
-          name: "StreamESPN",
-          domain: "streamespn.org",
-          trackingId: "wid_demo9876543210",
-          isPublic: true,
-        });
-        logger.info(`[Startup Seed] Created default website for admin: ${email}`);
-      }
+    // Only create a demo website when the database has no websites at all.
+    const [anyWebsite] = await db.select({ id: websites.id }).from(websites).limit(1);
+    if (!anyWebsite) {
+      await db.insert(websites).values({
+        userId,
+        name: "StreamESPN",
+        domain: "streamespn.org",
+        trackingId: "wid_demo9876543210",
+        isPublic: true,
+      });
+      logger.info(`[Startup Seed] Created default website for admin: ${email}`);
     }
 
     return userId;
@@ -89,7 +68,7 @@ export const seedDatabase = async () => {
   logger.info("Starting database seed...");
   await runMigrations();
 
-  // 1. Seed admin user (admin@gmail.com / sohoj@sohoj)
+  // 1. Seed admin user (from ADMIN_EMAIL / ADMIN_PASSWORD)
   const userId = await ensureAdminSeed();
   if (!userId) {
     logger.error("Failed to seed admin user.");
