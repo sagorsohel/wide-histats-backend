@@ -779,7 +779,8 @@ export class AnalyticsService {
           coalesce(vl.country, 'Unknown') as country,
           coalesce(vl.country_code, 'UNKNOWN') as country_code,
           count(distinct pv.visitor_id)::int as visitors,
-          count(pv.id)::int as pageviews
+          count(pv.id)::int as pageviews,
+          count(*) over()::int as total_count
         FROM page_views pv
         LEFT JOIN visitor_locations vl ON pv.visitor_id = vl.visitor_id
         WHERE pv.website_id = ${filter.websiteId}
@@ -794,7 +795,8 @@ export class AnalyticsService {
           coalesce(vl.city, 'Unknown') as city,
           coalesce(vl.country, 'Unknown') as country,
           coalesce(vl.country_code, 'UNKNOWN') as country_code,
-          count(distinct pv.visitor_id)::int as visitors
+          count(distinct pv.visitor_id)::int as visitors,
+          count(*) over()::int as total_count
         FROM page_views pv
         LEFT JOIN visitor_locations vl ON pv.visitor_id = vl.visitor_id
         WHERE pv.website_id = ${filter.websiteId}
@@ -807,9 +809,14 @@ export class AnalyticsService {
       `),
     ]);
 
+    const totalCountries = (countries.rows as any[])[0]?.total_count ?? countries.rows.length;
+    const totalCities = (cities.rows as any[])[0]?.total_count ?? cities.rows.length;
+
     const data = {
       countries: countries.rows as any[],
       cities: cities.rows as any[],
+      totalCountries,
+      totalCities,
     };
     this.setInCache(cacheKey, data, 30000); // 30 seconds TTL
     return data;
